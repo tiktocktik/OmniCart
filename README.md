@@ -23,7 +23,8 @@ India's smart shopping cart & price-intelligence platform. Paste any product lin
 ### Backend (FastAPI — port 8000)
 ```bash
 cd omnicart-backend
-pip install -r requirements.txt        # (create a venv first)
+python -m venv .venv && .venv\Scripts\activate   # Windows
+pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 

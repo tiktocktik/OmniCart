@@ -1,0 +1,25 @@
+# OmniCart backend dependencies
+# Install with:  pip install -r requirements.txt
+
+# --- Core API ---
+fastapi
+uvicorn[standard]
+pydantic
+
+# --- Scraping / parsing ---
+beautifulsoup4
+requests
+
+# --- Data / crypto (historical price archives) ---
+cryptography
+
+# --- Tests ---
+pytest
+
+# --- Optional: social ingestion (Reddit / X / Telegram) ---
+# playwright
+# telethon
+
+# --- Optional: advanced product matching (also needs the sibling ../pricekit project) ---
+# rapidfuzz
+# pricekit
