@@ -1,3 +1,4 @@
+import hashlib
 import re
 import urllib.parse
 from typing import Optional
@@ -437,7 +438,7 @@ def resolve_product_pipeline(
             )
 
             return ProductResolution(
-                id=f"web-{hash(cleaned_url) % 100000}",
+                id=f"web-{hashlib.sha1(cleaned_url.encode()).hexdigest()[:8]}",
                 canonical_url=cleaned_url,
                 platform=platform_title,
                 title=live_web["title"],
@@ -456,7 +457,7 @@ def resolve_product_pipeline(
                 history_data_points=history_data_points,
                 sellers=[
                     SellerInfo(
-                        id=f"seller_{hash(cleaned_url) % 10000}",
+                        id=f"seller_{hashlib.sha1(cleaned_url.encode()).hexdigest()[:8]}",
                         name=live_web["seller_name"],
                         price=live_price,
                         rating=live_web["rating"],
@@ -1222,7 +1223,7 @@ def resolve_product_pipeline(
         payment_options = calculate_payment_arbitrage(1000.0, platform, category)
 
         return ProductResolution(
-            id=f"item-{hash(query_or_url) % 100000}",
+            id=f"item-{hashlib.sha1(query_or_url.encode()).hexdigest()[:8]}",
             canonical_url=cleaned_url,
             platform=platform,
             title=title,

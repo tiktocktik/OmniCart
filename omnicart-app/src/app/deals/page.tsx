@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { API_BASE } from "@/lib/api";
 import {
   Flame,
   ArrowLeft,
@@ -65,7 +66,7 @@ export default function DealsPage() {
     else setLoading(true);
 
     try {
-      const url = `http://127.0.0.1:8000/deals?limit=50${forceRefresh ? "&refresh=true" : ""}`;
+      const url = `${API_BASE}/deals?limit=50${forceRefresh ? "&refresh=true" : ""}`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();

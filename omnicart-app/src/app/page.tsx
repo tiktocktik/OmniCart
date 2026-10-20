@@ -55,6 +55,7 @@ import {
   CompetitorPrice,
   PurchaseOption,
 } from "@/data/sampleData";
+import { API_BASE } from "@/lib/api";
 
 type TimeRange = "1M" | "6M" | "1Y" | "3Y" | "ALL";
 
@@ -106,7 +107,7 @@ export default function Home() {
 
   // Fetch live community deals on mount
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/deals?limit=8")
+    fetch(`${API_BASE}/deals?limit=8`)
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
@@ -305,7 +306,7 @@ export default function Home() {
 
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/resolve?query=${encodeURIComponent(queryText.trim())}&pincode=${userPincode}`,
+        `${API_BASE}/resolve?query=${encodeURIComponent(queryText.trim())}&pincode=${userPincode}`,
       );
 
       if (res.ok) {

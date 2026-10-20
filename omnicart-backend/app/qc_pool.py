@@ -12,15 +12,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional
 
-# Paths
-PRICE_AGGREGATOR_DIR = Path("D:/Workspace/Projects/PriceAggregator")
-FIXTURES_DIR = PRICE_AGGREGATOR_DIR / "tests" / "fixtures"
+# Optional sibling project. Never assume a machine-specific path.
+_env_dir = os.environ.get("PRICE_AGGREGATOR_DIR", "").strip()
+PRICE_AGGREGATOR_DIR = Path(_env_dir).expanduser() if _env_dir else None
+FIXTURES_DIR = (
+    PRICE_AGGREGATOR_DIR / "tests" / "fixtures" if PRICE_AGGREGATOR_DIR else None
+)
 
-if str(PRICE_AGGREGATOR_DIR) not in sys.path:
+if PRICE_AGGREGATOR_DIR and str(PRICE_AGGREGATOR_DIR) not in sys.path:
     sys.path.insert(0, str(PRICE_AGGREGATOR_DIR))
 
 try:
@@ -37,6 +41,8 @@ class QuickCommercePool:
 
     def get_fixture_listings(self) -> List[NormalizedListing]:
         """Load normalized listings from verified replay fixtures (instant, deterministic)."""
+        if not self.fixtures_dir or not self.fixtures_dir.exists():
+            return []
         listings: List[NormalizedListing] = []
 
         # 1. BigBasket

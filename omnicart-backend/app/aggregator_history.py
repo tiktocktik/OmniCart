@@ -16,9 +16,9 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 }
 
-SECRET_STR = "e946a32dc275ae624ec754dd16c2608b2c887f1b961e14d93d084a118c21d9e8"
-KEY = hashlib.sha256(SECRET_STR.encode("utf-8")).digest()
-aesgcm = AESGCM(KEY)
+SECRET_STR = os.environ.get("PRICEHISTORY_SECRET", "").strip()
+KEY = hashlib.sha256(SECRET_STR.encode("utf-8")).digest() if SECRET_STR else None
+aesgcm = AESGCM(KEY) if KEY else None
 
 # Known canonical slugs for instant high-speed resolution
 CURATED_SLUG_MAP = {
@@ -28,8 +28,10 @@ CURATED_SLUG_MAP = {
     "b0c8jm4tfh": "envie-infinite-plus-aa-high-capacity-3200mah-ni-mh-rechargeable-ready-to-use-battery-pack-of-4",
 }
 
-def generate_signature(url_str: str, body: str = "") -> str:
+def generate_signature(url_str: str, body: str = "") -> Optional[str]:
     """Generates AES-GCM encrypted signature for PriceHistoryApp API."""
+    if not aesgcm:
+        return None
     iv = os.urandom(12)
     payload = json.dumps({
         "u": len(url_str),
@@ -48,6 +50,8 @@ def get_product_slug_from_api(canonical_url: str) -> Optional[str]:
         encoded_param = urllib.parse.quote(canonical_url, safe='')
         url_path = f"/api/products/slug-from-url?url={encoded_param}"
         sig = generate_signature(url_path, "")
+        if not sig:
+            return None
         
         full_url = f"https://pricehistoryapp.com{url_path}"
         req_headers = {

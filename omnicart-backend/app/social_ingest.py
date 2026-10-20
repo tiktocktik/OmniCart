@@ -1,4 +1,5 @@
 import os
+import hashlib
 import re
 import urllib.request
 import urllib.parse
@@ -226,7 +227,7 @@ async def fetch_twitter_deals_async(
                         flash_meta = classify_flash_deal(deal_price, regular_price, max(discount, 15), 50, store)
 
                         deals.append({
-                            "id": f"x-{abs(hash(tweet_text)) % 1000000}",
+                            "id": f"x-{hashlib.sha1(tweet_text.encode()).hexdigest()[:10]}",
                             "title": tweet_text[:85].replace("\n", " "),
                             "store": store,
                             "dealPrice": deal_price,
@@ -319,7 +320,7 @@ async def fetch_telegram_channel_deals(
                     flash_meta = classify_flash_deal(deal_price, regular_price, max(discount, 15), 100, store)
 
                     deals.append({
-                        "id": f"tg-{msg.id}-{abs(hash(ch)) % 1000}",
+                        "id": f"tg-{msg.id}-{hashlib.sha1(ch.encode()).hexdigest()[:6]}",
                         "title": text.split("\n")[0][:85],
                         "store": store,
                         "dealPrice": deal_price,

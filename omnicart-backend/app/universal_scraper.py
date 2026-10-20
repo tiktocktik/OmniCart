@@ -1,7 +1,6 @@
 import re
 import json
 import html
-import ssl
 import urllib.request
 import urllib.parse
 from bs4 import BeautifulSoup
@@ -37,12 +36,8 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
     4. Real High-Res Gallery Images
     """
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
         req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, context=ctx, timeout=12) as response:
+        with urllib.request.urlopen(req, timeout=12) as response:
             raw_html = response.read().decode("utf-8", errors="ignore")
 
         soup = BeautifulSoup(raw_html, "html.parser")

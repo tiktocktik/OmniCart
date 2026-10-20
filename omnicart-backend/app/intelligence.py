@@ -1,9 +1,3 @@
-import re
-import json
-import sqlite3
-import os
-from datetime import datetime
-from bs4 import BeautifulSoup
 from typing import Optional, Dict, Any, List
 from .models import (
     ProductResolution,
@@ -14,37 +8,6 @@ from .models import (
     PricePrediction,
     SmartStackCombo
 )
-
-DB_PATH = os.path.join(os.path.dirname(__file__), "omnicart.db")
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS price_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id TEXT NOT NULL,
-        platform TEXT NOT NULL,
-        price REAL NOT NULL,
-        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        is_glitch INTEGER DEFAULT 0
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS coupons_cache (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        store TEXT NOT NULL,
-        code TEXT NOT NULL,
-        discount_text TEXT,
-        discount_amount REAL,
-        success_rate REAL DEFAULT 95.0,
-        last_verified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
 
 def compute_price_prediction(live_price: float, all_time_low: float, regular_price: float, history_source: str = "VERIFIED_AGGREGATOR", data_points: int = 0) -> PricePrediction:
     """

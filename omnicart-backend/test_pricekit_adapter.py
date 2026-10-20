@@ -2,6 +2,7 @@
 Tests for priceaggregator_adapter in OmniCart backend.
 """
 
+import os
 import sys
 import json
 from pathlib import Path
@@ -10,10 +11,18 @@ import pytest
 
 # Paths
 OMNICART_DIR = Path(__file__).parent
-PRICE_AGGREGATOR_DIR = Path("D:/Workspace/Projects/PriceAggregator")
+_env_dir = os.environ.get("PRICE_AGGREGATOR_DIR", "").strip()
+PRICE_AGGREGATOR_DIR = Path(_env_dir).expanduser() if _env_dir else None
 
 sys.path.insert(0, str(OMNICART_DIR))
-sys.path.insert(0, str(PRICE_AGGREGATOR_DIR))
+if PRICE_AGGREGATOR_DIR:
+    sys.path.insert(0, str(PRICE_AGGREGATOR_DIR))
+
+if not PRICE_AGGREGATOR_DIR or not PRICE_AGGREGATOR_DIR.exists():
+    pytest.skip(
+        "PRICE_AGGREGATOR_DIR is not configured; skipping PriceAggregator adapter tests",
+        allow_module_level=True,
+    )
 
 from app.priceaggregator_adapter import (
     normalized_listing_to_candidate_dict,

@@ -25,7 +25,7 @@ India's smart shopping cart & price-intelligence platform. Paste any product lin
 cd omnicart-backend
 python -m venv .venv && .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app
 ```
 
 ### Frontend (Next.js — port 3000)
