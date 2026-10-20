@@ -15,16 +15,46 @@ _CACHE_TIMESTAMP: float = 0.0
 CACHE_TTL_SECONDS = 600.0  # 10 minutes
 
 def infer_deal_category(title: str) -> str:
+    """Infer a category from whole words in the title.
+
+    Substring matching used to classify "Stainless Steel" as Fashion (because of
+    "tee") and a cleaning spray as Beauty. Whole-word matching keeps the label
+    tied to the product type.
+    """
     t = title.lower()
-    if any(k in t for k in ["tv", "speaker", "headphone", "earbud", "earphone", "power bank", "powerbank", "charger", "cable", "laptop", "pad", "tablet", "smartwatch", "soundbar", "camera", "monitor"]):
+
+    def has(words) -> bool:
+        return any(re.search(rf"\b{re.escape(word)}\b", t) for word in words)
+
+    if has([
+        "tv", "television", "speaker", "headphone", "earbud", "earphone",
+        "power bank", "powerbank", "charger", "cable", "laptop", "ideapad",
+        "tablet", "smartwatch", "soundbar", "camera", "monitor", "pc",
+    ]):
         return "Electronics & Gadgets"
-    if any(k in t for k in ["pant", "trouser", "shirt", "t-shirt", "tee", "dress", "jean", "kurta", "kurti", "shoe", "flats", "slipper", "kolhapuri", "bag", "luggage", "trolley", "jacket", "cloth", "cotton"]):
-        return "Fashion & Apparel"
-    if any(k in t for k in ["perfume", "deodorant", "deo", "spray", "lotion", "cream", "face", "shampoo", "serum", "trimmer", "grooming", "him & her"]):
-        return "Beauty & Grooming"
-    if any(k in t for k in ["mattress", "bed", "pillow", "carpet", "cleaner", "rack", "utensil", "cooker", "induction", "stove", "mixer", "juicer", "blender", "fryer", "knife", "towel", "mat", "sofa"]):
+    if has([
+        "mattress", "bed", "pillow", "carpet", "cleaner", "rack", "utensil",
+        "cooker", "pressure cooker", "induction", "stove", "mixer", "juicer",
+        "blender", "fryer", "knife", "towel", "mat", "sofa", "toaster", "iron",
+        "pan", "refrigerator", "fridge", "washing machine", "air conditioner",
+        "ac",
+    ]):
         return "Home & Kitchen"
-    if any(k in t for k in ["oil", "rice", "tea", "coffee", "food", "snack", "chocolate", "biscuit", "almond", "kaju", "dry fruit"]):
+    if has([
+        "perfume", "deodorant", "deo", "body spray", "lotion", "cream",
+        "face wash", "facewash", "shampoo", "serum", "trimmer", "grooming",
+    ]):
+        return "Beauty & Grooming"
+    if has([
+        "pant", "trouser", "shirt", "t-shirt", "tshirt", "tee shirt", "dress",
+        "jean", "kurta", "kurti", "shoe", "flats", "slipper", "kolhapuri",
+        "bag", "luggage", "trolley", "jacket", "clothing", "cotton", "watch",
+    ]):
+        return "Fashion & Apparel"
+    if has([
+        "oil", "rice", "tea", "coffee", "food", "snack", "chocolate", "biscuit",
+        "almond", "kaju", "dry fruit", "atta", "flour", "milk", "ghee",
+    ]):
         return "Grocery & Essentials"
     return "General Goods"
 
@@ -34,6 +64,17 @@ def classify_flash_deal(deal_price: float, regular_price: float, discount: int, 
     is_mega = False
     urgency = "NORMAL"
     badge = f"{discount}% OFF"
+
+    # No real struck-through price means no verified discount. Never imply one.
+    if discount <= 0 or regular_price <= deal_price:
+        return {
+            "isGlitch": False,
+            "isMegaDrop": False,
+            "urgencyLevel": "NORMAL",
+            "badge": "DEAL",
+            "heatScore": heat_score,
+            "savings": 0.0,
+        }
 
     # 1. Digit Boundary Drop Rules
     if regular_price >= 1800 and deal_price < 1000:
@@ -84,7 +125,7 @@ def classify_flash_deal(deal_price: float, regular_price: float, discount: int, 
     }
 
 def fetch_desidime_deals(limit: int = 20) -> List[Dict[str, Any]]:
-    """Scrapes trending community deals from DesiDime with exact product images."""
+    """Scrapes recent community deals from DesiDime. Prices come from the cards."""
     deals = []
     try:
         req = urllib.request.Request("https://www.desidime.com/deals", headers=HEADERS)
@@ -124,20 +165,28 @@ def fetch_desidime_deals(limit: int = 20) -> List[Dict[str, Any]]:
                 deal_price = float(p_digits)
                 
                 s_digits = re.sub(r"[^\d.]", "", s_tag.get_text()) if s_tag else ""
-                regular_price = float(s_digits) if s_digits else round(deal_price * 1.35, 2)
-                if regular_price <= deal_price:
-                    regular_price = round(deal_price * 1.35, 2)
-                
-                discount = int(round((1 - (deal_price / regular_price)) * 100))
-                
+                regular_price = float(s_digits) if s_digits else deal_price
+                if regular_price < deal_price:
+                    regular_price = deal_price
+
+                discount = (
+                    int(round((1 - (deal_price / regular_price)) * 100))
+                    if regular_price > deal_price
+                    else 0
+                )
+
                 st_tag = c.find("a", href=re.compile(r"/stores/"))
-                store_name = st_tag.get_text(strip=True) if st_tag else "Online Store"
+                # If the card does not name a store, say where the deal came from,
+                # not "Online Store" (which is not a store).
+                store_name = st_tag.get_text(strip=True) if st_tag else "DesiDime"
 
                 deal_url = "https://www.desidime.com" + a_tag["href"]
                 m_id = re.search(r"-(\d+)$", a_tag["href"])
                 deal_id = f"desidime-{m_id.group(1)}" if m_id else f"dd-{len(deals)}"
 
-                flash_meta = classify_flash_deal(deal_price, regular_price, max(discount, 10), heat_score, store_name)
+                flash_meta = classify_flash_deal(
+                    deal_price, regular_price, discount, heat_score, store_name
+                )
 
                 deals.append({
                     "id": deal_id,
@@ -146,9 +195,9 @@ def fetch_desidime_deals(limit: int = 20) -> List[Dict[str, Any]]:
                     "dealPrice": deal_price,
                     "regularPrice": regular_price,
                     "savings": flash_meta["savings"],
-                    "discount": max(discount, 10),
+                    "discount": discount,
                     "category": infer_deal_category(title),
-                    "timeAgo": "Live",
+                    "timeAgo": "",
                     "image": img_url,
                     "badge": flash_meta["badge"],
                     "isMegaDrop": flash_meta["isMegaDrop"],
@@ -166,7 +215,7 @@ def fetch_desidime_deals(limit: int = 20) -> List[Dict[str, Any]]:
     return deals
 
 def fetch_dealsmagnet_deals(limit: int = 20) -> List[Dict[str, Any]]:
-    """Scrapes top algorithmic lightning drops from Dealsmagnet with verified product images."""
+    """Scrapes recent deals from Dealsmagnet. Prices come from the cards."""
     deals = []
     try:
         req = urllib.request.Request("https://www.dealsmagnet.com/", headers=HEADERS)
@@ -183,7 +232,8 @@ def fetch_dealsmagnet_deals(limit: int = 20) -> List[Dict[str, Any]]:
                 
                 p = im
                 prices = []
-                store_name = "Online"
+                # "Online" is not a store. Fall back to the aggregator name.
+                store_name = "Dealsmagnet"
                 for _ in range(5):
                     if p:
                         t = p.get_text(" ", strip=True)
@@ -200,11 +250,19 @@ def fetch_dealsmagnet_deals(limit: int = 20) -> List[Dict[str, Any]]:
                     continue
                 
                 deal_price = float(prices[0].replace(",", ""))
-                regular_price = float(prices[1].replace(",", "")) if len(prices) > 1 else round(deal_price * 1.35, 2)
-                if regular_price <= deal_price:
-                    regular_price = round(deal_price * 1.35, 2)
-                
-                discount = int(round((1 - (deal_price / regular_price)) * 100))
+                regular_price = (
+                    float(prices[1].replace(",", ""))
+                    if len(prices) > 1
+                    else deal_price
+                )
+                if regular_price < deal_price:
+                    regular_price = deal_price
+
+                discount = (
+                    int(round((1 - (deal_price / regular_price)) * 100))
+                    if regular_price > deal_price
+                    else 0
+                )
                 title = alt_title or (a_tag.get_text(strip=True) if a_tag else "Special Deal")
                 if len(title) < 10:
                     continue
@@ -213,7 +271,9 @@ def fetch_dealsmagnet_deals(limit: int = 20) -> List[Dict[str, Any]]:
                 full_url = href if href.startswith("http") else "https://www.dealsmagnet.com" + href
                 slug = href.strip("/").split("/")[-1]
 
-                flash_meta = classify_flash_deal(deal_price, regular_price, max(discount, 15), 0, store_name)
+                flash_meta = classify_flash_deal(
+                    deal_price, regular_price, discount, 0, store_name
+                )
 
                 deals.append({
                     "id": f"dm-{slug[:20]}",
@@ -222,9 +282,9 @@ def fetch_dealsmagnet_deals(limit: int = 20) -> List[Dict[str, Any]]:
                     "dealPrice": deal_price,
                     "regularPrice": regular_price,
                     "savings": flash_meta["savings"],
-                    "discount": max(discount, 15),
+                    "discount": discount,
                     "category": infer_deal_category(title),
-                    "timeAgo": "Recent",
+                    "timeAgo": "",
                     "image": img_src,
                     "badge": flash_meta["badge"],
                     "isMegaDrop": flash_meta["isMegaDrop"],
@@ -242,7 +302,7 @@ def fetch_dealsmagnet_deals(limit: int = 20) -> List[Dict[str, Any]]:
     return deals
 
 def get_live_deals(limit: int = 40, force_refresh: bool = False) -> List[Dict[str, Any]]:
-    """Aggregates and caches live deals with 100% verified product images."""
+    """Aggregates and caches deals from public Indian deal aggregators."""
     global _CACHE_DEALS, _CACHE_TIMESTAMP
     
     now = time.time()
@@ -268,6 +328,18 @@ def get_live_deals(limit: int = 40, force_refresh: bool = False) -> List[Dict[st
             combined.extend(reddit_deals)
     except Exception:
         pass
+
+    # The same card can appear twice on a source page. Keep one copy.
+    seen_ids = set()
+    deduped = []
+    for deal in combined:
+        deal_id = deal.get("id")
+        if deal_id:
+            if deal_id in seen_ids:
+                continue
+            seen_ids.add(deal_id)
+        deduped.append(deal)
+    combined = deduped
 
     if combined:
         _CACHE_DEALS = combined

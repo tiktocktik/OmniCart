@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from .models import ProductResolution, ResolveRequest
 from .resolver import resolve_product_pipeline
+from .search_engine import search_products
 from .deal_scraper import get_live_deals
 
 app = FastAPI(
@@ -27,13 +28,34 @@ def get_deals(
     limit: int = Query(40, ge=1, le=100),
     refresh: bool = Query(False, description="Force refresh cache from sources")
 ):
-    """Fetches real-time trending loot deals from community sources (DesiDime, Dealsmagnet)."""
+    """Fetches community deals from public Indian aggregators (DesiDime, Dealsmagnet)."""
     try:
         return get_live_deals(limit=limit, force_refresh=refresh)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/search")
+def search(
+    q: str = Query("", max_length=120, description="Product name to search"),
+    limit: int = Query(8, ge=1, le=20),
+):
+    """Live product search. Returns candidates to pick from; never sample data."""
+    if not q.strip():
+        return {
+            "status": "empty",
+            "results": [],
+            "message": "Type a product name to search.",
+            "sources": {},
+        }
+    try:
+        return search_products(q, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/resolve", response_model=ProductResolution)
 def resolve_get(query: str = Query(..., description="Product URL or Amazon ASIN"), pincode: str = Query("110001")):

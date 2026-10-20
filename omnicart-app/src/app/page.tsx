@@ -71,6 +71,32 @@ interface CartItem {
   quantity: number;
 }
 
+interface SearchCandidate {
+  id: string;
+  title: string;
+  price: number | null;
+  image: string | null;
+  platform: string;
+  url: string;
+}
+
+function looksLikeProductLink(value: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  if (/^B0[A-Z0-9]{8}$/i.test(v)) return true;
+  try {
+    const url = new URL(v.includes("://") ? v : `https://${v}`);
+    return Boolean(
+      url.hostname &&
+        url.hostname.includes(".") &&
+        !url.hostname.includes(" ") &&
+        !url.hostname.endsWith("."),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
@@ -105,6 +131,11 @@ export default function Home() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [trendingDeals, setTrendingDeals] = useState<any[]>(TRENDING_LOOTS);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchCandidate[] | null>(
+    null,
+  );
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [searchNote, setSearchNote] = useState<string | null>(null);
 
   // Fetch live community deals on mount
   useEffect(() => {
@@ -273,24 +304,30 @@ export default function Home() {
     liveResolvedProduct ||
     (activeProductId ? PRODUCTS_DB[activeProductId] : null);
 
-  // Real delivery message directly from marketplace API or computed dynamically
+  // Show only a delivery message the store actually provided.
   const displayDeliveryStatus = activeProduct
     ? activeProduct.pincodeDeliveryStatus ||
       (activeProduct.sellers && activeProduct.sellers[0]?.deliveryDays) ||
-      `Standard Delivery to ${userPincode} in 3-5 business days`
+      ""
     : "";
 
-  const computedDeliveryCharge = activeProduct
-    ? activeProduct.deliveryCharge !== undefined
-      ? activeProduct.deliveryCharge
-      : activeProduct.livePrice >= 499
-        ? 0
-        : 40
-    : 0;
+  // null means "the store did not state a delivery charge".
+  const computedDeliveryCharge: number | null = activeProduct
+    ? (activeProduct.deliveryCharge ?? null)
+    : null;
+
+  const hasRating = Boolean(
+    activeProduct &&
+      typeof activeProduct.rating === "number" &&
+      activeProduct.rating > 0 &&
+      typeof activeProduct.ratingsCount === "number" &&
+      activeProduct.ratingsCount > 0,
+  );
 
   // Real-time backend query execution
-  const executeQuery = async (queryText: string) => {
+  const executeQuery = async (queryText: string, pincodeOverride?: string) => {
     if (!queryText.trim()) return;
+    const pincode = pincodeOverride || userPincode;
 
     setApiError(null);
     setIsLoadingApi(true);
@@ -308,7 +345,7 @@ export default function Home() {
 
     try {
       const res = await fetch(
-        `${API_BASE}/resolve?query=${encodeURIComponent(queryText.trim())}&pincode=${userPincode}`,
+        `${API_BASE}/resolve?query=${encodeURIComponent(queryText.trim())}&pincode=${pincode}`,
       );
 
       if (res.ok) {
@@ -441,6 +478,8 @@ export default function Home() {
 
         setSelectedImageIndex(0);
         setLiveResolvedProduct(mapped);
+        setSearchResults(null);
+        setSearchNote(null);
       } else {
         let detail =
           "Could not resolve this product. Check the link and try again.";
@@ -465,10 +504,95 @@ export default function Home() {
     }
   };
 
+  const executeSearch = async (queryText: string) => {
+    const q = queryText.trim();
+    if (!q) return;
+
+    setApiError(null);
+    setSearchNote(null);
+    setSearchResults(null);
+    setIsSearching(true);
+    setLiveResolvedProduct(null);
+    setActiveProductId(null);
+    setSelectedPoint(null);
+
+    setSearchHistory((prev) => {
+      const next = [q, ...prev.filter((item) => item !== q)];
+      return next.slice(0, 6);
+    });
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/search?q=${encodeURIComponent(q)}&limit=8`,
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setApiError({
+          message: data?.detail || `Search failed (HTTP ${res.status}).`,
+        });
+        return;
+      }
+      const results: SearchCandidate[] = Array.isArray(data?.results)
+        ? data.results
+        : [];
+      const note =
+        typeof data?.message === "string" && data.message.trim()
+          ? data.message
+          : null;
+      setSearchResults(results);
+      if (results.length === 0) {
+        setSearchNote(
+          note || `No products found for "${q}". Try a more specific name.`,
+        );
+      } else {
+        setSearchNote(note);
+      }
+    } catch {
+      setApiError({
+        message: `Could not reach the OmniCart backend at ${API_BASE}. Start the backend and try again.`,
+      });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const runSearchValue = (value: string) => {
+    const q = value.trim();
+    if (!q) return;
+    setSearchQuery(q);
+    if (looksLikeProductLink(q)) {
+      setSearchResults(null);
+      setSearchNote(null);
+      executeQuery(q);
+    } else {
+      executeSearch(q);
+    }
+  };
+
   const handleSearch = (e?: React.FormEvent) => {
     if (e && e.preventDefault) e.preventDefault();
-    executeQuery(searchQuery);
+    runSearchValue(searchQuery);
   };
+
+  // Deep link from Deals ("Stack & Buy") and other pages: /?q=...
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("q");
+    if (!q) return;
+
+    setSearchQuery(q);
+    const pin = localStorage.getItem("omnicart_pincode") || "110001";
+    if (looksLikeProductLink(q)) {
+      setSearchResults(null);
+      setSearchNote(null);
+      executeQuery(q, pin);
+    } else {
+      executeSearch(q);
+    }
+    window.history.replaceState({}, "", window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSelectOption = (option: PurchaseOption) => {
     if (!activeProduct) return;
@@ -721,7 +845,7 @@ export default function Home() {
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-200/80 dark:border-amber-800/80 text-amber-700 dark:text-amber-300 font-semibold text-xs hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors shadow-2xs"
               >
                 <Flame className="h-3 w-3 text-amber-500 fill-amber-500" />
-                <span>Live Drops</span>
+                <span>Deals</span>
               </Link>
             </div>
           </div>
@@ -803,16 +927,16 @@ export default function Home() {
           >
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/60 dark:border-emerald-800/50 text-emerald-800 dark:text-emerald-300 text-xs font-medium mb-4">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-              <span>Universal Price Arbitrage & Real-Time Deal Tracking</span>
+              <span>Universal Price Intelligence & Deal Tracking</span>
             </div>
 
             <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50 mb-3">
               Real prices. Honest answers.
             </h1>
             <p className="text-sm sm:text-base text-neutral-600 dark:text-neutral-400 max-w-xl mx-auto font-normal leading-relaxed">
-              Paste a product link or Amazon ASIN. OmniCart shows the live
-              price, verified price history when available, and a clear message
-              when a store can no longer be read.
+              Paste a product link or ASIN, or type a product name. OmniCart
+              shows the live price, verified price history when available, and
+              a clear message when a store can no longer be read.
             </p>
           </motion.div>
         )}
@@ -826,7 +950,7 @@ export default function Home() {
             <Search className="h-4 sm:h-5 w-4 sm:w-5 text-neutral-400 ml-3 flex-shrink-0" />
             <input
               type="text"
-              placeholder="Paste any product URL or ASIN (Amazon, Flipkart, Myntra, Westside, Zepto)..."
+              placeholder="Paste a product link or ASIN, or type a product name (e.g. Sony WH-1000XM5)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-transparent border-none px-3 py-2 text-xs sm:text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none"
@@ -843,11 +967,17 @@ export default function Home() {
             )}
             <button
               type="submit"
-              disabled={isLoadingApi}
-              className="px-5 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-medium text-xs sm:text-sm rounded-xl transition-colors flex-shrink-0 cursor-pointer flex items-center gap-1.5 shadow-xs"
+              disabled={isLoadingApi || isSearching}
+              className="px-5 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-medium text-xs sm:text-sm rounded-xl transition-colors flex-shrink-0 cursor-pointer flex items-center gap-1.5 shadow-xs disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isLoadingApi && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {isLoadingApi ? "Analyzing..." : "Inspect Live"}
+              {(isLoadingApi || isSearching) && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              )}
+              {isSearching
+                ? "Searching..."
+                : isLoadingApi
+                  ? "Analyzing..."
+                  : "Inspect Live"}
             </button>
           </div>
         </form>
@@ -879,6 +1009,89 @@ export default function Home() {
           </div>
         )}
 
+        {/* Search results: pick the exact product before resolving it */}
+        {(isSearching || searchResults !== null) && (
+          <div className="max-w-2xl mx-auto mb-3 overflow-hidden rounded-xl border border-neutral-200/90 bg-white text-left shadow-xs dark:border-neutral-800/80 dark:bg-[#121215]">
+            <div className="flex items-center justify-between border-b border-neutral-100 px-3.5 py-2 dark:border-neutral-800/80">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                {isSearching ? "Searching live stores" : "Pick the exact product"}
+              </p>
+              {!isSearching && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchResults(null);
+                    setSearchNote(null);
+                  }}
+                  className="rounded p-1 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                  aria-label="Close search results"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {searchNote &&
+              !isSearching &&
+              searchResults &&
+              searchResults.length > 0 && (
+                <p className="border-b border-neutral-100 px-3.5 py-2 text-[11px] text-amber-700 dark:border-neutral-800/80 dark:text-amber-300">
+                  {searchNote}
+                </p>
+              )}
+
+            {isSearching ? (
+              <div className="flex items-center gap-2 px-3.5 py-4 text-xs text-neutral-500 dark:text-neutral-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Reading Amazon and Flipkart search results...
+              </div>
+            ) : searchResults && searchResults.length > 0 ? (
+              <ul className="max-h-80 divide-y divide-neutral-100 overflow-y-auto dark:divide-neutral-800/80">
+                {searchResults.map((candidate) => (
+                  <li key={candidate.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery(candidate.url);
+                        executeQuery(candidate.url);
+                      }}
+                      className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-900/60"
+                    >
+                      {candidate.image ? (
+                        <img
+                          src={candidate.image}
+                          alt=""
+                          className="h-11 w-11 flex-shrink-0 rounded-lg border border-neutral-200 bg-white object-contain dark:border-neutral-800"
+                        />
+                      ) : (
+                        <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+                          <ShoppingBag className="h-4 w-4 text-neutral-400" />
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="line-clamp-2 block text-xs font-medium text-neutral-800 dark:text-neutral-100">
+                          {candidate.title}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-neutral-500 dark:text-neutral-400">
+                          {candidate.platform}
+                          {typeof candidate.price === "number"
+                            ? ` · ₹${candidate.price.toLocaleString("en-IN")}`
+                            : " · price on store"}
+                        </span>
+                      </span>
+                      <ArrowRight className="h-4 w-4 flex-shrink-0 text-neutral-400" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="px-3.5 py-4 text-xs text-neutral-600 dark:text-neutral-400">
+                {searchNote || "No products found. Try a more specific name."}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Recent Search History Chips */}
         {searchHistory.length > 0 && (
           <div className="flex items-center justify-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 flex-wrap">
@@ -890,7 +1103,7 @@ export default function Home() {
                 key={idx}
                 onClick={() => {
                   setSearchQuery(item);
-                  executeQuery(item);
+                  runSearchValue(item);
                 }}
                 className="px-2.5 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800/80 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 text-[11px] truncate max-w-[200px] cursor-pointer transition-colors font-mono"
                 title={item}
@@ -989,30 +1202,48 @@ export default function Home() {
                       {activeProduct.title}
                     </h2>
 
-                    {/* Rating & Real Delivery Status */}
-                    <div className="flex flex-wrap items-center gap-2 mt-2.5 text-xs text-neutral-600 dark:text-neutral-300">
-                      <span className="font-semibold text-neutral-900 dark:text-neutral-100">
-                        ★ {activeProduct.rating}
-                      </span>
-                      <span className="text-neutral-400">
-                        ({activeProduct.ratingsCount.toLocaleString()})
-                      </span>
-                      <span className="text-neutral-300 dark:text-neutral-700">
-                        •
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-neutral-700 dark:text-neutral-300">
-                        <Truck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                        <span>{displayDeliveryStatus}</span>
-                      </span>
-                      <span className="text-neutral-300 dark:text-neutral-700">
-                        •
-                      </span>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
-                        {computedDeliveryCharge === 0
-                          ? "FREE Delivery"
-                          : `+₹${computedDeliveryCharge}`}
-                      </span>
-                    </div>
+                    {/* Rating & delivery: only render facts the store returned */}
+                    {(hasRating ||
+                      displayDeliveryStatus ||
+                      computedDeliveryCharge !== null) && (
+                      <div className="flex flex-wrap items-center gap-2 mt-2.5 text-xs text-neutral-600 dark:text-neutral-300">
+                        {hasRating && (
+                          <>
+                            <span className="font-semibold text-neutral-900 dark:text-neutral-100">
+                              ★ {activeProduct.rating}
+                            </span>
+                            <span className="text-neutral-400">
+                              ({activeProduct.ratingsCount!.toLocaleString()})
+                            </span>
+                            {(displayDeliveryStatus ||
+                              computedDeliveryCharge !== null) && (
+                              <span className="text-neutral-300 dark:text-neutral-700">
+                                •
+                              </span>
+                            )}
+                          </>
+                        )}
+                        {displayDeliveryStatus && (
+                          <span className="inline-flex items-center gap-1 text-neutral-700 dark:text-neutral-300">
+                            <Truck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span>{displayDeliveryStatus}</span>
+                          </span>
+                        )}
+                        {displayDeliveryStatus &&
+                          computedDeliveryCharge !== null && (
+                            <span className="text-neutral-300 dark:text-neutral-700">
+                              •
+                            </span>
+                          )}
+                        {computedDeliveryCharge !== null && (
+                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
+                            {computedDeliveryCharge === 0
+                              ? "FREE Delivery"
+                              : `+₹${computedDeliveryCharge}`}
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {/* Variant & Option Selectors (Clean Inline Layout) */}
                     {activeProduct.purchaseOptions &&
@@ -1210,15 +1441,21 @@ export default function Home() {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2.5 text-xs text-neutral-400 dark:text-neutral-500 mt-1.5 font-mono">
-                        <span>
-                          Low: ₹{activeProduct.allTimeLow.toLocaleString()}
-                        </span>
-                        <span>•</span>
-                        <span>
-                          High: ₹{activeProduct.allTimeHigh.toLocaleString()}
-                        </span>
-                      </div>
+                      {activeProduct.historySource !== "UNAVAILABLE" &&
+                        typeof activeProduct.allTimeLow === "number" &&
+                        typeof activeProduct.allTimeHigh === "number" &&
+                        activeProduct.allTimeLow > 0 &&
+                        activeProduct.allTimeHigh > 0 && (
+                          <div className="flex items-center gap-2.5 text-xs text-neutral-400 dark:text-neutral-500 mt-1.5 font-mono">
+                            <span>
+                              Low: ₹{activeProduct.allTimeLow.toLocaleString()}
+                            </span>
+                            <span>•</span>
+                            <span>
+                              High: ₹{activeProduct.allTimeHigh.toLocaleString()}
+                            </span>
+                          </div>
+                        )}
                     </div>
 
                     {/* Primary Action Buttons */}
@@ -1440,14 +1677,14 @@ export default function Home() {
                         <ShieldCheck className="h-4 w-4" />
                       </div>
                       <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                        No 1:1 Identical Match Found on Other Marketplaces
+                        No 1:1 Cross-Listing Returned
                       </h4>
                       <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-md leading-relaxed">
-                        We scanned Flipkart and Amazon India for an exact SKU
-                        match. No identical 1:1 cross-listing exists. The live
-                        direct price of ₹
+                        OmniCart did not receive an identical SKU match from
+                        other marketplaces. The live direct price of ₹
                         {activeProduct.livePrice.toLocaleString()} on{" "}
-                        {activeProduct.store} is currently unique.
+                        {activeProduct.store} is the price we could verify.
+                        Open the store to compare before buying.
                       </p>
                     </div>
                   )}
@@ -1721,7 +1958,7 @@ export default function Home() {
                               <span>Maximum Savings Stack</span>
                             </div>
                             <h4 className="text-base sm:text-lg font-semibold text-neutral-950 dark:text-neutral-50 tracking-tight">
-                              Store Promo + Payment Arbitrage Combo
+                              Store Promo + Payment Stack
                             </h4>
                             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
                               Calculated lowest possible net checkout price by
@@ -2004,9 +2241,9 @@ export default function Home() {
                 Live Retail Price Intelligence
               </h3>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
-                Paste any live URL from Amazon India, Westside, Max Fashion,
-                Myntra, or Flipkart into the search box above to inspect
-                authentic prices, stackable coupons, and payment savings.
+                Paste a live product URL from a supported store, or type a
+                product name to search Amazon India and Flipkart. OmniCart shows
+                the live price and a clear message when a store cannot be read.
               </p>
             </div>
             <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 mt-2 flex-wrap justify-center">
@@ -2020,7 +2257,7 @@ export default function Home() {
                 }}
                 className="px-3 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-xs font-medium cursor-pointer transition-colors"
               >
-                Max Fashion T-Shirt (₹599)
+                Max Fashion T-Shirt
               </button>
               <button
                 onClick={() => {
@@ -2031,7 +2268,7 @@ export default function Home() {
                 }}
                 className="px-3 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-xs font-medium cursor-pointer transition-colors"
               >
-                Westside Track Pants (₹1,699)
+                Westside Track Pants
               </button>
             </div>
           </motion.div>
@@ -2099,13 +2336,13 @@ export default function Home() {
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5 uppercase tracking-wider">
               <Flame className="h-3.5 w-3.5 text-amber-500" />
-              <span>Verified Price Drops</span>
+              <span>Community Price Drops</span>
             </h3>
             <Link
               href="/deals"
               className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 flex items-center gap-1 transition-colors"
             >
-              <span>View All Drops ({trendingDeals.length})</span>
+              <span>View All Deals ({trendingDeals.length})</span>
               <span>→</span>
             </Link>
           </div>
@@ -2362,8 +2599,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t border-neutral-200/80 dark:border-neutral-800 py-6 bg-white dark:bg-[#09090B] text-center text-xs text-neutral-400 font-mono transition-colors duration-200">
-        OmniCart • Universal Price Arbitrage & Real-Time Deal Intelligence for
-        India
+        OmniCart • Price Intelligence & Community Deal Tracking for India
       </footer>
     </div>
   );

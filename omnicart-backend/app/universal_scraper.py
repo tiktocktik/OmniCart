@@ -52,6 +52,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
         seller_name = None
         category = ""
         availability = ""
+        delivery_charge: Optional[float] = None
         extracted_coupons = []
         purchase_options: List[Dict[str, Any]] = []
         specifications: Dict[str, str] = {}
@@ -75,7 +76,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                             live_price = float(pdp.get("mrp") or 0.0)
                             regular_price = live_price
 
-                        brand_name = pdp.get("brand", {}).get("name", "THE BEETEL HOUSE")
+                        brand_name = pdp.get("brand", {}).get("name") or ""
                         ratings_obj = pdp.get("ratings", {})
                         if ratings_obj:
                             avg = ratings_obj.get("averageRating")
@@ -83,7 +84,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                             total = ratings_obj.get("totalCount")
                             ratings_count = int(total) if total is not None else 0
 
-                        category = pdp.get("analytics", {}).get("articleType") or "Trousers"
+                        category = pdp.get("analytics", {}).get("articleType") or ""
 
                         # Extract media albums images
                         for album in pdp.get("media", {}).get("albums", []):
@@ -126,8 +127,10 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                             if v and v != "NA":
                                 specifications[k] = str(v).replace("\r\n", "; ")
 
-                        specifications["Brand"] = brand_name
-                        specifications["Country of Origin"] = pdp.get("countryOfOrigin", "India")
+                        if brand_name:
+                            specifications["Brand"] = brand_name
+                        if pdp.get("countryOfOrigin"):
+                            specifications["Country of Origin"] = pdp["countryOfOrigin"]
                         if pdp.get("manufacturer"):
                             specifications["Manufacturer"] = pdp.get("manufacturer")
 
@@ -140,21 +143,9 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                             highlights.append(f"Closure: {specifications['Closure']}")
                         if specifications.get("Fabrics"):
                             highlights.append(f"Fabric: {specifications['Fabrics']}")
-                        highlights.append(f"Brand: {brand_name}")
-                        highlights.append("Myntra Assured 100% Genuine Quality Guarantee")
+                        if brand_name:
+                            highlights.append(f"Brand: {brand_name}")
 
-                        # Offers & discounts
-                        for disc in pdp.get("discounts", []):
-                            txt = disc.get("label") or disc.get("discountText")
-                            if txt:
-                                extracted_coupons.append({
-                                    "code": "MYNTRA_OFFER",
-                                    "discount_amount": float(regular_price - live_price) if regular_price > live_price else 100.0,
-                                    "discount_text": f"Flat {txt} Instant Discount",
-                                    "success_rate": 99.0,
-                                    "source": "Myntra Verified Offer"
-                                })
-                                break
                 except Exception as ex:
                     print(f"Error parsing Myntra pdpData: {ex}")
 
@@ -190,6 +181,23 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                             elif isinstance(img, str) and img not in gallery_images:
                                 gallery_images.append(img)
 
+                            aggregate = item.get("aggregateRating")
+                            if isinstance(aggregate, dict):
+                                rating_value = aggregate.get("ratingValue")
+                                if rating_value is not None:
+                                    try:
+                                        rating = float(rating_value)
+                                    except (TypeError, ValueError):
+                                        pass
+                                count_value = aggregate.get("ratingCount") or aggregate.get(
+                                    "reviewCount"
+                                )
+                                if count_value is not None:
+                                    try:
+                                        ratings_count = int(count_value)
+                                    except (TypeError, ValueError):
+                                        pass
+
                             offers = item.get("offers")
                             if isinstance(offers, dict):
                                 p = offers.get("price")
@@ -200,6 +208,14 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                                     availability = "Out of Stock"
                                 elif "InStock" in avail:
                                     availability = "In Stock"
+                                shipping = offers.get("shippingDetails")
+                                if isinstance(shipping, dict):
+                                    rate = shipping.get("shippingRate")
+                                    if isinstance(rate, dict) and rate.get("value") is not None:
+                                        try:
+                                            delivery_charge = float(rate["value"])
+                                        except (TypeError, ValueError):
+                                            pass
                             elif isinstance(offers, list) and offers:
                                 p = offers[0].get("price")
                                 if p:
@@ -225,10 +241,10 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                             "name": "Size",
                             "value": clean_label,
                             "price": v_price,
-                            "is_available": True,
+                            "is_available": bool(v.get("available", True)),
                             "is_selected": len(purchase_options) == 0,
                             "url": f"{url.split('?')[0]}?variant={v_sku}",
-                            "stock_info": "In Stock"
+                            "stock_info": None
                         })
                 except Exception:
                     pass
@@ -264,7 +280,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
             elif soup.title:
                 title = clean_extracted_title(soup.title.string or "")
             else:
-                title = "Verified Retail Listing"
+                title = "Retail listing"
         else:
             title = clean_extracted_title(title)
 
@@ -290,6 +306,30 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                         live_price = p_val
                 except Exception:
                     pass
+
+        # 4.5 MRP: only when the page itself renders a struck-through price.
+        if live_price > 0 and regular_price <= live_price:
+            def _struck_price(element):
+                match = re.search(r"([0-9][0-9,]{2,})", element.get_text(" ", strip=True))
+                if not match:
+                    return None
+                try:
+                    value = float(match.group(1).replace(",", ""))
+                except ValueError:
+                    return None
+                return value if value > live_price else None
+
+            for element in soup.find_all(["del", "s"]):
+                candidate = _struck_price(element)
+                if candidate:
+                    regular_price = candidate
+                    break
+            if regular_price <= live_price:
+                for element in soup.find_all(style=re.compile(r"line-through", re.I)):
+                    candidate = _struck_price(element)
+                    if candidate:
+                        regular_price = candidate
+                        break
 
         # 5. Extract Live Verified Coupons & Promo Codes
         for el in soup.find_all(["div", "span", "p"]):
@@ -343,7 +383,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                 "is_available": True,
                 "is_selected": (s == selected_size) if selected_size else (s == found_sizes[0]),
                 "url": opt_url,
-                "stock_info": "In Stock"
+                "stock_info": None
             })
 
         # Scan for color options
@@ -371,7 +411,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                 "is_available": True,
                 "is_selected": (c == selected_color) if selected_color else True,
                 "url": opt_url,
-                "stock_info": "In Stock"
+                "stock_info": None
             })
 
         # 7. Extract Specifications & Highlights
@@ -421,13 +461,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
             specifications["Product Type"] = "Casual Shirt"
 
         if "nuoflexx" in t_low:
-            specifications["Brand"] = "Nuoflexx (Tata Trent Flagship)"
-            specifications["Collection"] = "Nuoflexx Performance Stretch"
-
-        # Policies
-        specifications["Country of Origin"] = "India"
-        specifications["Return Policy"] = "30-Day Hassle-Free Returns & Store Exchange"
-        specifications["Delivery Window"] = f"Delivers to {pincode} in 2-4 business days" if pincode else "Delivers in 2-4 business days"
+            specifications["Brand"] = "Nuoflexx"
 
         # Build Highlights
         if specifications.get("Brand"):
@@ -438,8 +472,6 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
             highlights.append(f"Rise: {specifications['Rise']}")
         if specifications.get("Collection"):
             highlights.append(f"Collection: {specifications['Collection']}")
-        highlights.append("100% Genuine Certified Portal Guarantee")
-        highlights.append("30-Day Return & Metro Fast Dispatch")
 
         # 8. High-res gallery images normalization
         filtered_gallery = []
@@ -465,10 +497,6 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
 
         if filtered_gallery:
             primary_image = filtered_gallery[0]
-
-        # Regular MRP
-        if regular_price == 0.0:
-            regular_price = round(live_price * 1.25, 2) if live_price > 0 else 1999.0
 
         # Domain/Brand detection
         parsed_domain = urllib.parse.urlparse(url).netloc.replace("www.", "").lower()
@@ -589,7 +617,8 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
             "purchase_options": purchase_options,
             "specifications": specifications,
             "highlights": highlights[:6],
-            "delivery_promise": f"Standard Delivery to {pincode} in 2-4 business days" if pincode else "Delivery in 2-4 business days",
+            "delivery_promise": None,
+            "delivery_charge": delivery_charge,
             "status": "ok",
         }
     except Exception:

@@ -33,22 +33,53 @@ def _stable_id(prefix: str, value: str) -> str:
     return f"{prefix}-{hashlib.sha1(value.encode()).hexdigest()[:8]}"
 
 
+def _optional_float(value) -> Optional[float]:
+    """Return a positive float, or None when the store did not provide one."""
+    if value is None or value == "":
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result > 0 else None
+
+
+def _optional_int(value) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result > 0 else None
+
+
+def _optional_number(value) -> Optional[float]:
+    """Like _optional_float but keeps a real zero (e.g. free delivery)."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _unavailable(cleaned_url: str, platform: str, message: str) -> ProductResolution:
     """An explicit "we could not read this" result. Never a substitute product."""
     return ProductResolution(
         id=_stable_id("unavailable", cleaned_url or platform),
         canonical_url=cleaned_url,
         platform=platform,
-        title=f"{platform} listing",
+        title="",
         category="",
         image_url="",
         gallery_images=[],
-        rating=0.0,
-        ratings_count=0,
+        rating=None,
+        ratings_count=None,
         live_price=0.0,
         regular_price=0.0,
-        all_time_low=0.0,
-        all_time_high=0.0,
+        all_time_low=None,
+        all_time_high=None,
         prediction=PricePrediction(
             badge="VERIFY ON STORE",
             detail=message,
@@ -63,6 +94,8 @@ def _unavailable(cleaned_url: str, platform: str, message: str) -> ProductResolu
         status_message=message,
         history_source="UNAVAILABLE",
         history_data_points=0,
+        pincode_delivery_status="",
+        delivery_charge=None,
     )
 
 
@@ -83,20 +116,22 @@ def _verified_history(cleaned_url, live_price, regular_price):
         real = None
 
     if not real:
-        # No verified history. Do not synthesize a trajectory.
-        return {}, live_price, regular_price, "UNAVAILABLE", 0
+        # No verified history. Do not synthesize a trajectory or a price range.
+        return {}, None, None, "UNAVAILABLE", 0
 
+    low = real.get("all_time_low")
+    high = real.get("all_time_high")
     return (
         real.get("history") or {},
-        float(real.get("all_time_low") or live_price),
-        float(real.get("all_time_high") or regular_price),
+        float(low) if low is not None else None,
+        float(high) if high is not None else None,
         real.get("history_source") or "VERIFIED_AGGREGATOR",
         int(real.get("total_points") or 0),
     )
 
 
 def _prediction(live_price, low, regular, source, points):
-    if source == "UNAVAILABLE":
+    if source == "UNAVAILABLE" or low is None:
         return PricePrediction(
             badge="NO HISTORY",
             detail="Live price loaded. No verified price history is available for this product yet.",
@@ -120,14 +155,31 @@ def _competitors(title, platform, price):
         return [], []
 
 
+def _web_failure_message(platform: str) -> str:
+    if platform == "Flipkart":
+        return (
+            "Flipkart did not return a readable product page. "
+            "Open the store to check the current price."
+        )
+    return (
+        f"Could not read this {platform} page. "
+        "Open the store to check the current price."
+    )
+
+
 def _build_amazon(item_id: str, cleaned_url: str, pincode: str, live: dict) -> ProductResolution:
     live_price = float(live.get("live_price") or 0.0)
     regular_price = float(live.get("regular_price") or live_price)
+    if regular_price < live_price:
+        regular_price = live_price
     history, low, high, source, points = _verified_history(
         cleaned_url, live_price, regular_price
     )
     prediction = _prediction(live_price, low, regular_price, source, points)
-    delivery = live.get("delivery_promise") or "Delivery estimate unavailable"
+    delivery = live.get("delivery_promise") or ""
+    delivery_charge = _optional_number(live.get("delivery_charge"))
+    rating = _optional_float(live.get("rating"))
+    ratings_count = _optional_int(live.get("ratings_count"))
 
     sellers = []
     seller_name = live.get("seller_name")
@@ -137,10 +189,10 @@ def _build_amazon(item_id: str, cleaned_url: str, pincode: str, live: dict) -> P
                 id=f"amz-{item_id}",
                 name=seller_name,
                 price=live_price,
-                rating=float(live.get("rating") or 0.0),
-                reviews_count=int(live.get("ratings_count") or 0),
+                rating=rating or 0.0,
+                reviews_count=ratings_count or 0,
                 delivery_days=delivery,
-                delivery_charge=0.0 if live_price >= 499 else 40.0,
+                delivery_charge=delivery_charge,
                 badge="Amazon",
                 is_best_seller=True,
                 score=100,
@@ -171,8 +223,8 @@ def _build_amazon(item_id: str, cleaned_url: str, pincode: str, live: dict) -> P
         category=live.get("category") or "",
         image_url=live.get("image_url") or "",
         gallery_images=live.get("gallery_images") or [],
-        rating=float(live.get("rating") or 0.0),
-        ratings_count=int(live.get("ratings_count") or 0),
+        rating=rating,
+        ratings_count=ratings_count,
         live_price=live_price,
         regular_price=regular_price,
         all_time_low=low,
@@ -192,7 +244,7 @@ def _build_amazon(item_id: str, cleaned_url: str, pincode: str, live: dict) -> P
         coupons=coupons,
         pincode=pincode,
         pincode_delivery_status=delivery,
-        delivery_charge=0.0 if live_price >= 499 else 40.0,
+        delivery_charge=delivery_charge,
         payment_options=payment_options,
         smart_stack=smart_stack,
         is_loot_deal=drop >= 50.0,
@@ -204,12 +256,17 @@ def _build_amazon(item_id: str, cleaned_url: str, pincode: str, live: dict) -> P
 def _build_web(cleaned_url: str, platform: str, pincode: str, live: dict) -> ProductResolution:
     live_price = float(live.get("live_price") or 0.0)
     regular_price = float(live.get("regular_price") or live_price)
+    if regular_price < live_price:
+        regular_price = live_price
     history, low, high, source, points = _verified_history(
         cleaned_url, live_price, regular_price
     )
     prediction = _prediction(live_price, low, regular_price, source, points)
     store = live.get("platform") or platform
-    delivery = live.get("delivery_promise") or "Delivery estimate unavailable"
+    delivery = live.get("delivery_promise") or ""
+    delivery_charge = _optional_number(live.get("delivery_charge"))
+    rating = _optional_float(live.get("rating"))
+    ratings_count = _optional_int(live.get("ratings_count"))
 
     sellers = []
     seller_name = live.get("seller_name")
@@ -219,10 +276,10 @@ def _build_web(cleaned_url: str, platform: str, pincode: str, live: dict) -> Pro
                 id=_stable_id("seller", cleaned_url),
                 name=seller_name,
                 price=live_price,
-                rating=float(live.get("rating") or 0.0),
-                reviews_count=int(live.get("ratings_count") or 0),
+                rating=rating or 0.0,
+                reviews_count=ratings_count or 0,
                 delivery_days=delivery,
-                delivery_charge=0.0 if live_price >= 499 else 40.0,
+                delivery_charge=delivery_charge,
                 badge=store,
                 is_best_seller=True,
                 score=100,
@@ -253,8 +310,8 @@ def _build_web(cleaned_url: str, platform: str, pincode: str, live: dict) -> Pro
         category=live.get("category") or "",
         image_url=live.get("image_url") or "",
         gallery_images=live.get("gallery_images") or [],
-        rating=float(live.get("rating") or 0.0),
-        ratings_count=int(live.get("ratings_count") or 0),
+        rating=rating,
+        ratings_count=ratings_count,
         live_price=live_price,
         regular_price=regular_price,
         all_time_low=low,
@@ -274,7 +331,7 @@ def _build_web(cleaned_url: str, platform: str, pincode: str, live: dict) -> Pro
         coupons=coupons,
         pincode=pincode,
         pincode_delivery_status=delivery,
-        delivery_charge=0.0 if live_price >= 499 else 40.0,
+        delivery_charge=delivery_charge,
         payment_options=payment_options,
         smart_stack=smart_stack,
         is_loot_deal=drop >= 50.0,
@@ -295,7 +352,16 @@ def resolve_product_pipeline(
 
     if platform == "SEARCH_QUERY":
         raise ValueError(
-            "OmniCart resolves product links. Paste a product URL or an Amazon ASIN."
+            "OmniCart resolves product links. Use /search for product names, "
+            "or paste a product URL / Amazon ASIN."
+        )
+
+    if platform == "SHORT_LINK":
+        return _unavailable(
+            cleaned_url,
+            "Short link",
+            "Could not expand this short link. Open it in a browser and paste "
+            "the final product URL.",
         )
 
     if platform == "Amazon.in":
@@ -325,18 +391,12 @@ def resolve_product_pipeline(
 
     live = fetch_live_web_product(cleaned_url, pincode)
     if not live:
-        return _unavailable(
-            cleaned_url,
-            platform,
-            f"Could not read this {platform} page. "
-            "Open the store to check the current price.",
-        )
+        return _unavailable(cleaned_url, platform, _web_failure_message(platform))
     if live.get("status") == "unavailable":
         return _unavailable(
             cleaned_url,
             live.get("platform") or platform,
-            live.get("status_message")
-            or "No readable product data was found on this page.",
+            live.get("status_message") or _web_failure_message(platform),
         )
     if not live.get("live_price"):
         return _unavailable(

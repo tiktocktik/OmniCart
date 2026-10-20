@@ -68,12 +68,12 @@ export interface ProductDetail {
   category: string;
   store: string;
   storeUrl: string;
-  rating: number;
-  ratingsCount: number;
+  rating: number | null;
+  ratingsCount: number | null;
   livePrice: number;
   regularPrice: number;
-  allTimeLow: number;
-  allTimeHigh: number;
+  allTimeLow: number | null;
+  allTimeHigh: number | null;
   productImages: string[];
   prediction: {
     badge: "BUY NOW" | "WAIT" | "FAIR PRICE";
@@ -87,7 +87,7 @@ export interface ProductDetail {
     "3Y": PricePoint[];
     ALL: PricePoint[];
   };
-  historySource?: "VERIFIED_AGGREGATOR" | "ESTIMATED_TRAJECTORY";
+  historySource?: "VERIFIED_AGGREGATOR" | "ESTIMATED_TRAJECTORY" | "UNAVAILABLE";
   historyDataPoints?: number;
   sellers: Seller[];
   competitors?: CompetitorPrice[];
@@ -97,7 +97,7 @@ export interface ProductDetail {
   highlights?: string[];
   pincode?: string;
   pincodeDeliveryStatus?: string;
-  deliveryCharge?: number;
+  deliveryCharge?: number | null;
   coupons: Coupon[];
   paymentOptions: PaymentMethod[];
   smartStack?: SmartStackCombo;

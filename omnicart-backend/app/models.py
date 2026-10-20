@@ -28,7 +28,7 @@ class SellerInfo(BaseModel):
     rating: float
     reviews_count: int
     delivery_days: str
-    delivery_charge: float = 0.0
+    delivery_charge: Optional[float] = None
     badge: str
     is_best_seller: bool
     score: int
@@ -86,15 +86,15 @@ class ProductResolution(BaseModel):
     category: str
     image_url: str
     gallery_images: List[str] = []
-    rating: float
-    ratings_count: int
+    rating: Optional[float] = None
+    ratings_count: Optional[int] = None
     live_price: float
     regular_price: float
     pincode: str = "110001"
-    pincode_delivery_status: str = "In Stock for Delivery"
-    delivery_charge: float = 0.0
-    all_time_low: float
-    all_time_high: float
+    pincode_delivery_status: str = ""
+    delivery_charge: Optional[float] = None
+    all_time_low: Optional[float] = None
+    all_time_high: Optional[float] = None
     prediction: PricePrediction
     history: Dict[str, List[PricePoint]]
     sellers: List[SellerInfo]

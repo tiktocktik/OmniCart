@@ -174,8 +174,9 @@ export default function DealsPage() {
   }, [deals, searchQuery, selectedStore, selectedCategory, sortBy]);
 
   const handleInspectDeal = (deal: LiveDeal) => {
-    // Navigate to inspector with direct deal URL
-    const target = deal.url || deal.title;
+    // Deal URLs point at aggregator posts, not store listings. Search the
+    // product title so the inspector returns live Amazon/Flipkart candidates.
+    const target = deal.title || deal.url;
     router.push(`/?q=${encodeURIComponent(target)}`);
   };
 
@@ -201,7 +202,7 @@ export default function DealsPage() {
                 <span className="font-bold tracking-tight text-base flex items-center gap-1.5">
                   OmniCart
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-semibold uppercase tracking-wider">
-                    Live Drops
+                    Deals
                   </span>
                 </span>
               </div>
@@ -252,16 +253,15 @@ export default function DealsPage() {
             <div>
               <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 text-xs font-mono font-medium mb-3">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Live Deal Aggregation Engine Active</span>
+                <span>Deal Aggregation • 10-Minute Cache</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-neutral-900 dark:text-neutral-100">
-                Verified Indian Marketplace Price Drops
+                Indian Marketplace Price Drops
               </h1>
               <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 max-w-2xl">
-                Real-time lightning drops, glitch deals, and crowdsourced price
-                alerts verified across Amazon, Flipkart, Myntra, Ajio, and
-                dark-store hubs. 100% authentic product photos and live checkout
-                links.
+                Crowdsourced price drops from public Indian deal aggregators.
+                Prices and availability change quickly; confirm on the store
+                before buying.
               </p>
             </div>
 
@@ -269,10 +269,10 @@ export default function DealsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
               <div className="p-2.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141418]">
                 <div className="text-[10px] text-neutral-400 uppercase font-semibold">
-                  Active Drops
+                  Loaded Drops
                 </div>
                 <div className="text-base font-bold text-neutral-900 dark:text-neutral-100 mt-0.5">
-                  {deals.length} Live
+                  {deals.length} Cached
                 </div>
               </div>
               <div className="p-2.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141418]">
@@ -373,7 +373,7 @@ export default function DealsPage() {
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
                 <span className="text-[11px] font-semibold uppercase text-neutral-400 font-mono mr-1 flex items-center gap-1">
                   <Store className="h-3 w-3" />
-                  Store:
+                  Source / Store:
                 </span>
                 {stores.map((s) => (
                   <button
@@ -423,7 +423,7 @@ export default function DealsPage() {
             <strong className="text-neutral-900 dark:text-neutral-100">
               {filteredDeals.length}
             </strong>{" "}
-            verified drops
+            deals
             {selectedStore !== "All" && ` in ${selectedStore}`}
             {selectedCategory !== "All" && ` • ${selectedCategory}`}
           </div>
@@ -539,7 +539,9 @@ export default function DealsPage() {
                         <span className="truncate max-w-[140px]">
                           {deal.category || "General Goods"}
                         </span>
-                        <span className="text-[10px]">{deal.timeAgo}</span>
+                        {deal.timeAgo && (
+                          <span className="text-[10px]">{deal.timeAgo}</span>
+                        )}
                       </div>
 
                       {/* Title */}
@@ -558,12 +560,14 @@ export default function DealsPage() {
                         <span className="text-base font-extrabold text-neutral-900 dark:text-neutral-100">
                           ₹{deal.dealPrice.toLocaleString("en-IN")}
                         </span>
-                        <span className="text-xs line-through text-neutral-400">
-                          ₹{deal.regularPrice.toLocaleString("en-IN")}
-                        </span>
+                        {deal.regularPrice > deal.dealPrice && (
+                          <span className="text-xs line-through text-neutral-400">
+                            ₹{deal.regularPrice.toLocaleString("en-IN")}
+                          </span>
+                        )}
                       </div>
 
-                      {savingsAmount > 0 && (
+                      {savingsAmount > 0 && deal.discount > 0 && (
                         <div className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5">
                           Save ₹{savingsAmount.toLocaleString("en-IN")} (
                           {deal.discount}% off)
@@ -586,7 +590,7 @@ export default function DealsPage() {
                           rel="noopener noreferrer"
                           className="w-full py-2 px-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 font-medium text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer text-center"
                         >
-                          <span>Store Link</span>
+                          <span>Deal Post</span>
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       </div>
@@ -605,13 +609,13 @@ export default function DealsPage() {
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
             <span>
-              OmniCart Live Arbitrage Engine • Automated Price Tracking
+              OmniCart Deal Aggregator • Community Price Tracking
             </span>
           </div>
           <div>
             <span>
-              Data refreshed every 10 minutes from verified Indian deal
-              aggregators.
+              Cached for 10 minutes from public Indian deal aggregators.
+              Confirm on the store.
             </span>
           </div>
         </div>
