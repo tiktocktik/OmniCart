@@ -97,6 +97,94 @@ function looksLikeProductLink(value: string): boolean {
   }
 }
 
+/**
+ * Derive a display title from a product link. Only used when the store page
+ * itself could not be read, so the page can keep its shell without inventing
+ * a product name, price, or history.
+ */
+function titleFromProductLink(value: string): string {
+  const raw = (value || "").trim();
+  if (!raw) return "";
+  if (/^B0[A-Z0-9]{8}$/i.test(raw)) return `Product ${raw.toUpperCase()}`;
+
+  let url: URL;
+  try {
+    url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+  } catch {
+    return "";
+  }
+
+  const markers = new Set([
+    "dp",
+    "gp",
+    "product",
+    "products",
+    "d",
+    "p",
+    "aw",
+    "buy",
+    "shop",
+    "item",
+    "items",
+  ]);
+  const parts = url.pathname
+    .split("/")
+    .filter(Boolean)
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+
+  const idLike = (part: string) =>
+    /^[A-Z0-9]{10}$/i.test(part) ||
+    /^itm[a-z0-9]+$/i.test(part) ||
+    /^\d{6,}$/.test(part);
+
+  let slug = "";
+  const productMarker = parts.findIndex((part) =>
+    ["dp", "gp", "product"].includes(part.toLowerCase()),
+  );
+  if (productMarker > 0) {
+    const candidate = parts[productMarker - 1];
+    if (!markers.has(candidate.toLowerCase())) slug = candidate;
+  }
+
+  if (!slug) {
+    const catalogMarker = parts.findIndex(
+      (part) => part.toLowerCase() === "p",
+    );
+    if (catalogMarker > 0) {
+      const candidate = parts[catalogMarker - 1];
+      if (!markers.has(candidate.toLowerCase())) slug = candidate;
+    }
+  }
+
+  if (!slug) {
+    const candidates = parts.filter(
+      (part) =>
+        /[a-z]/i.test(part) &&
+        !idLike(part) &&
+        !markers.has(part.toLowerCase()) &&
+        part.length >= 4,
+    );
+    slug = candidates.sort((a, b) => b.length - a.length)[0] || "";
+  }
+
+  const cleaned = slug
+    .replace(/\.(html?|php)$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned && !/^[A-Z0-9]{10}$/i.test(cleaned)) return cleaned;
+
+  const asin = parts.find((part) => /^[A-Z0-9]{10}$/i.test(part));
+  return asin ? `Product ${asin.toUpperCase()}` : "";
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
@@ -351,45 +439,56 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
 
-        if (data.status === "unavailable") {
-          setLiveResolvedProduct(null);
-          setActiveProductId(null);
+        const isUnavailable = data.status === "unavailable";
+        const fallbackTitle = isUnavailable
+          ? titleFromProductLink(queryText) ||
+            titleFromProductLink(data.canonical_url || "") ||
+            `${data.platform || "Store"} listing`
+          : data.title;
+
+        if (isUnavailable) {
           setApiError({
             message:
               data.status_message ||
               "We couldn't read this product. Open the store to check the price.",
             storeUrl: data.canonical_url || undefined,
           });
-          return;
         }
 
         const mapped: ProductDetail = {
           id: data.id,
-          title: data.title,
-          category: data.category,
-          store: data.platform,
-          storeUrl: data.canonical_url,
-          rating: data.rating,
-          ratingsCount: data.ratings_count,
-          livePrice: data.live_price,
-          regularPrice: data.regular_price,
-          allTimeLow: data.all_time_low,
-          allTimeHigh: data.all_time_high,
+          title: fallbackTitle,
+          category: data.category || "",
+          store: data.platform || "Store",
+          storeUrl: data.canonical_url || "",
+          rating: data.rating ?? null,
+          ratingsCount: data.ratings_count ?? null,
+          livePrice: data.live_price || 0,
+          regularPrice: data.regular_price || 0,
+          allTimeLow: data.all_time_low ?? null,
+          allTimeHigh: data.all_time_high ?? null,
           productImages:
-            data.gallery_images && data.gallery_images.length > 0
+            Array.isArray(data.gallery_images) &&
+            data.gallery_images.length > 0
               ? data.gallery_images.filter(Boolean)
               : data.image_url
                 ? [data.image_url]
                 : [],
           prediction: {
-            badge: data.prediction.badge as any,
-            detail: data.prediction.detail,
-            dropLikelihood: data.prediction.drop_likelihood,
+            badge:
+              data.prediction?.badge ||
+              (isUnavailable ? "VERIFY ON STORE" : "FAIR PRICE"),
+            detail:
+              data.prediction?.detail ||
+              data.status_message ||
+              "No buying advice is available yet.",
+            dropLikelihood: data.prediction?.drop_likelihood || "UNKNOWN",
           },
-          history: data.history,
-          historySource: data.history_source,
-          historyDataPoints: data.history_data_points,
-          sellers: data.sellers.map((s: any) => ({
+          history: data.history || {},
+          historySource:
+            data.history_source || (isUnavailable ? "UNAVAILABLE" : undefined),
+          historyDataPoints: data.history_data_points || 0,
+          sellers: (data.sellers || []).map((s: any) => ({
             id: s.id,
             name: s.name,
             price: s.price,
@@ -443,16 +542,16 @@ export default function Home() {
           specifications: data.specifications || {},
           highlights: data.highlights || [],
           pincode: data.pincode,
-          pincodeDeliveryStatus: data.pincode_delivery_status,
-          deliveryCharge: data.delivery_charge,
-          coupons: data.coupons.map((c: any) => ({
+          pincodeDeliveryStatus: data.pincode_delivery_status || "",
+          deliveryCharge: data.delivery_charge ?? null,
+          coupons: (data.coupons || []).map((c: any) => ({
             code: c.code,
             source: c.source,
             discountText: c.discount_text,
             discountAmount: c.discount_amount,
             successRate: c.success_rate,
           })),
-          paymentOptions: data.payment_options.map((p: any) => ({
+          paymentOptions: (data.payment_options || []).map((p: any) => ({
             title: p.title,
             type: p.type as any,
             effectiveSavings: p.effective_savings,
@@ -474,10 +573,13 @@ export default function Home() {
                 executionSteps: data.smart_stack.execution_steps || [],
               }
             : undefined,
+          status: isUnavailable ? "unavailable" : "ok",
+          statusMessage: data.status_message || undefined,
         };
 
         setSelectedImageIndex(0);
         setLiveResolvedProduct(mapped);
+        setActiveProductId(null);
         setSearchResults(null);
         setSearchNote(null);
       } else {
@@ -633,13 +735,6 @@ export default function Home() {
     }
   };
 
-  const selectProduct = (id: string) => {
-    setActiveProductId(id);
-    setLiveResolvedProduct(null);
-    setSelectedImageIndex(0);
-    setSelectedPoint(null);
-  };
-
   const copyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(code);
@@ -710,6 +805,11 @@ export default function Home() {
             100,
         )
       : 0;
+
+  const productUnavailable = activeProduct?.status === "unavailable";
+  const hasPriceHistory = chartData.length > 0;
+  const hasVerifiedHistory =
+    activeProduct?.historySource === "VERIFIED_AGGREGATOR" && hasPriceHistory;
 
   return (
     <div className="min-h-screen flex flex-col font-sans selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:bg-emerald-500/30 dark:selection:text-emerald-200 antialiased transition-colors duration-200">
@@ -1135,14 +1235,23 @@ export default function Home() {
                 {/* Product Imagery */}
                 <div className="flex flex-col gap-3 w-full md:w-68 flex-shrink-0">
                   <div className="w-full h-68 sm:h-72 rounded-xl overflow-hidden bg-neutral-50/60 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800/60 relative flex items-center justify-center">
-                    <img
-                      src={
-                        activeProduct.productImages[selectedImageIndex] ||
-                        activeProduct.productImages[0]
-                      }
-                      alt={activeProduct.title}
-                      className="w-full h-full object-contain p-3 transition-transform duration-200 hover:scale-105"
-                    />
+                    {activeProduct.productImages.length > 0 ? (
+                      <img
+                        src={
+                          activeProduct.productImages[selectedImageIndex] ||
+                          activeProduct.productImages[0]
+                        }
+                        alt={activeProduct.title}
+                        className="w-full h-full object-contain p-3 transition-transform duration-200 hover:scale-105"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 text-neutral-400 dark:text-neutral-500">
+                        <ShoppingBag className="h-10 w-10" />
+                        <span className="text-[11px] font-medium">
+                          No image from store
+                        </span>
+                      </div>
+                    )}
                     <a
                       href={activeProduct.storeUrl}
                       target="_blank"
@@ -1183,24 +1292,42 @@ export default function Home() {
                   <div>
                     {/* Top Row: Category + Wishlist */}
                     <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 mb-2">
-                      <span className="font-medium tracking-wide uppercase text-[10px] text-neutral-400 dark:text-neutral-500">
-                        {activeProduct.category}
-                      </span>
-                      <button
-                        onClick={() => setIsWishlisted(!isWishlisted)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition-colors cursor-pointer text-xs"
-                      >
-                        <Heart
-                          className={`h-3.5 w-3.5 ${isWishlisted ? "fill-rose-500 text-rose-500" : ""}`}
-                        />
-                        <span>{isWishlisted ? "Saved" : "Track"}</span>
-                      </button>
+                      {activeProduct.category ? (
+                        <span className="font-medium tracking-wide uppercase text-[10px] text-neutral-400 dark:text-neutral-500">
+                          {activeProduct.category}
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                      {productUnavailable ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/70 text-[10px] font-mono font-bold text-amber-700 dark:text-amber-300">
+                          <AlertCircle className="h-3 w-3" />
+                          STORE PAGE UNAVAILABLE
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setIsWishlisted(!isWishlisted)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition-colors cursor-pointer text-xs"
+                        >
+                          <Heart
+                            className={`h-3.5 w-3.5 ${isWishlisted ? "fill-rose-500 text-rose-500" : ""}`}
+                          />
+                          <span>{isWishlisted ? "Saved" : "Track"}</span>
+                        </button>
+                      )}
                     </div>
 
                     {/* Product Title */}
                     <h2 className="text-xl sm:text-2xl font-semibold text-neutral-950 dark:text-neutral-50 leading-snug tracking-tight">
                       {activeProduct.title}
                     </h2>
+                    {productUnavailable && (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5 leading-relaxed">
+                        Title taken from the product link. Live price, history,
+                        alternatives and offers are unavailable until the store
+                        page can be read.
+                      </p>
+                    )}
 
                     {/* Rating & delivery: only render facts the store returned */}
                     {(hasRating ||
@@ -1437,7 +1564,9 @@ export default function Home() {
                           </>
                         ) : (
                           <span className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-                            Check Live Price on Store
+                            {productUnavailable
+                              ? "Live price unavailable"
+                              : "Check Live Price on Store"}
                           </span>
                         )}
                       </div>
@@ -1460,24 +1589,42 @@ export default function Home() {
 
                     {/* Primary Action Buttons */}
                     <div className="flex items-center gap-2.5">
-                      <button
-                        onClick={() => addToCart(activeProduct)}
-                        className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 text-neutral-900 dark:text-neutral-100 font-medium text-xs sm:text-sm flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                      >
-                        <ShoppingCart className="h-4 w-4" />
-                        <span>Add to Cart</span>
-                      </button>
+                      {productUnavailable ? (
+                        activeProduct.storeUrl ? (
+                          <a
+                            href={activeProduct.storeUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-5 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-medium text-xs sm:text-sm flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                            <span>Open Store</span>
+                          </a>
+                        ) : null
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => addToCart(activeProduct)}
+                            className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 text-neutral-900 dark:text-neutral-100 font-medium text-xs sm:text-sm flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                          >
+                            <ShoppingCart className="h-4 w-4" />
+                            <span>Add to Cart</span>
+                          </button>
 
-                      <button
-                        onClick={executeAutoSnipe}
-                        disabled={isOrdering}
-                        className="px-5 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-medium text-xs sm:text-sm flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
-                      >
-                        <Zap className="h-4 w-4 fill-white" />
-                        <span>
-                          {isOrdering ? "Securing Order..." : "Fast Checkout"}
-                        </span>
-                      </button>
+                          <button
+                            onClick={executeAutoSnipe}
+                            disabled={isOrdering}
+                            className="px-5 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-medium text-xs sm:text-sm flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
+                          >
+                            <Zap className="h-4 w-4 fill-white" />
+                            <span>
+                              {isOrdering
+                                ? "Securing Order..."
+                                : "Fast Checkout"}
+                            </span>
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1677,14 +1824,14 @@ export default function Home() {
                         <ShieldCheck className="h-4 w-4" />
                       </div>
                       <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                        No 1:1 Cross-Listing Returned
+                        {productUnavailable
+                          ? "No Alternatives Available"
+                          : "No 1:1 Cross-Listing Returned"}
                       </h4>
                       <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-md leading-relaxed">
-                        OmniCart did not receive an identical SKU match from
-                        other marketplaces. The live direct price of ₹
-                        {activeProduct.livePrice.toLocaleString()} on{" "}
-                        {activeProduct.store} is the price we could verify.
-                        Open the store to compare before buying.
+                        {productUnavailable
+                          ? "No cross-platform alternatives were checked because the store page could not be read. Open the store to compare manually."
+                          : `OmniCart did not receive an identical SKU match from other marketplaces. The live direct price of ₹${activeProduct.livePrice.toLocaleString()} on ${activeProduct.store} is the price we could verify. Open the store to compare before buying.`}
                       </p>
                     </div>
                   )}
@@ -1707,8 +1854,7 @@ export default function Home() {
                         <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                           Multi-Year Price Curve
                         </h3>
-                        {activeProduct.historySource ===
-                        "VERIFIED_AGGREGATOR" ? (
+                        {hasVerifiedHistory ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 flex items-center gap-1">
                             <CheckCircle2 className="h-3 w-3" />
                             VERIFIED DATA (
@@ -1717,40 +1863,42 @@ export default function Home() {
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                            ESTIMATED TRAJECTORY
+                            NO VERIFIED HISTORY
                           </span>
                         )}
                       </div>
                       <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                        {activeProduct.historySource === "VERIFIED_AGGREGATOR"
+                        {hasVerifiedHistory
                           ? "Directly extracted from Indian Price History archives with verified daily observations."
-                          : "Trajectory anchored on live store price and historical price band."}
+                          : "No verified price observations are available. OmniCart does not synthesize a price curve."}
                       </p>
                     </div>
 
                     {/* Range Filters */}
-                    <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-900 p-1 rounded-xl border border-neutral-200/80 dark:border-neutral-800 self-start">
-                      {(["1M", "6M", "1Y", "3Y", "ALL"] as const).map((r) => (
-                        <button
-                          key={r}
-                          onClick={() => {
-                            setTimeRange(r);
-                            setSelectedPoint(null);
-                          }}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition-all cursor-pointer ${
-                            timeRange === r
-                              ? "bg-white dark:bg-neutral-800 text-neutral-950 dark:text-white shadow-xs font-bold"
-                              : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-950 dark:hover:text-white"
-                          }`}
-                        >
-                          {r}
-                        </button>
-                      ))}
-                    </div>
+                    {hasPriceHistory && (
+                      <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-900 p-1 rounded-xl border border-neutral-200/80 dark:border-neutral-800 self-start">
+                        {(["1M", "6M", "1Y", "3Y", "ALL"] as const).map((r) => (
+                          <button
+                            key={r}
+                            onClick={() => {
+                              setTimeRange(r);
+                              setSelectedPoint(null);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition-all cursor-pointer ${
+                              timeRange === r
+                                ? "bg-white dark:bg-neutral-800 text-neutral-950 dark:text-white shadow-xs font-bold"
+                                : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-950 dark:hover:text-white"
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Selected Point Badge */}
-                  {selectedPoint && (
+                  {selectedPoint && hasPriceHistory && (
                     <div className="mb-4 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/80 flex items-center justify-between text-xs font-mono">
                       <div>
                         <span className="text-neutral-500">Date:</span>{" "}
@@ -1774,7 +1922,8 @@ export default function Home() {
                   )}
 
                   {/* Interactive Graph */}
-                  <div className="h-64 w-full">
+                  {hasPriceHistory ? (
+                    <div className="h-64 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart
                         data={chartData}
@@ -1857,7 +2006,20 @@ export default function Home() {
                         />
                       </AreaChart>
                     </ResponsiveContainer>
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="h-64 w-full flex flex-col items-center justify-center gap-2 text-center rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-900/30 px-6">
+                      <History className="h-7 w-7 text-neutral-400" />
+                      <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                        No verified price history yet
+                      </h4>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-md leading-relaxed">
+                        When a verified source returns observations for this
+                        product, the chart will appear here. Open the store to
+                        check the current price.
+                      </p>
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -1880,8 +2042,9 @@ export default function Home() {
                     </p>
                   </div>
 
-                  <div className="space-y-2.5 mt-1">
-                    {activeProduct.sellers.map((seller) => (
+                  {activeProduct.sellers.length > 0 ? (
+                    <div className="space-y-2.5 mt-1">
+                      {activeProduct.sellers.map((seller) => (
                       <div
                         key={seller.id}
                         className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
@@ -1933,7 +2096,20 @@ export default function Home() {
                         </div>
                       </div>
                     ))}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="p-6 text-center flex flex-col items-center justify-center gap-2 bg-neutral-50 dark:bg-neutral-900/40 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800">
+                      <ShoppingBag className="h-5 w-5 text-neutral-400" />
+                      <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                        No seller offers returned
+                      </h4>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-md leading-relaxed">
+                        {productUnavailable
+                          ? "Seller data is unavailable because the store page could not be read. Open the store to check the current seller."
+                          : "The store did not return any additional seller offers for this listing."}
+                      </p>
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -2071,6 +2247,20 @@ export default function Home() {
                       </div>
                     )}
 
+                  {(!activeProduct.smartStack ||
+                    activeProduct.smartStack.combinedTotalSavings <= 0) && (
+                    <div className="p-4 rounded-xl bg-neutral-50 dark:bg-neutral-900/40 border border-dashed border-neutral-200 dark:border-neutral-800">
+                      <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                        No stackable combination verified
+                      </h4>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                        OmniCart only shows a stacking plan when a store coupon
+                        and a card offer are both verified. Open the store to
+                        check the offers currently available at checkout.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Coupons & Marketplace Bank Offers */}
                   <div>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
@@ -2174,52 +2364,59 @@ export default function Home() {
                     <div className="flex items-center justify-between mb-1">
                       <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-2">
                         <CreditCard className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                        <span>Your Synced Cards & Payment Rails</span>
+                        <span>Payment Offers & Checkout Savings</span>
                       </h3>
                       <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
-                        Portfolio Connected
+                        Store-published only
                       </span>
                     </div>
                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-                      Calculated dynamically across your HSBC, SBI Black, ICICI,
-                      Tata Neu, and UPI accounts.
+                      Only payment offers the store actually publishes are shown.
+                      OmniCart does not infer a personal card portfolio.
                     </p>
-                    <div className="space-y-2.5">
-                      {activeProduct.paymentOptions.map((opt, i) => (
-                        <div
-                          key={i}
-                          className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all ${
-                            opt.isRecommended
-                              ? "bg-emerald-50/20 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/80 shadow-xs"
-                              : "border-neutral-200/80 dark:border-neutral-800 bg-white dark:bg-[#121215]"
-                          }`}
-                        >
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
-                                {opt.title}
-                              </span>
-                              {opt.isRecommended && (
-                                <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-mono font-bold border border-emerald-200 dark:border-emerald-800">
-                                  BEST SAVINGS
+                    {activeProduct.paymentOptions.length > 0 ? (
+                      <div className="space-y-2.5">
+                        {activeProduct.paymentOptions.map((opt, i) => (
+                          <div
+                            key={i}
+                            className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all ${
+                              opt.isRecommended
+                                ? "bg-emerald-50/20 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/80 shadow-xs"
+                                : "border-neutral-200/80 dark:border-neutral-800 bg-white dark:bg-[#121215]"
+                            }`}
+                          >
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                                  {opt.title}
                                 </span>
-                              )}
+                                {opt.isRecommended && (
+                                  <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-mono font-bold border border-emerald-200 dark:border-emerald-800">
+                                    BEST SAVINGS
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
+                                {opt.explanation}
+                              </p>
                             </div>
-                            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
-                              {opt.explanation}
-                            </p>
+                            <div className="text-right font-mono flex-shrink-0 self-end sm:self-auto">
+                              <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100 block">
+                                ₹{opt.finalPrice.toLocaleString()}
+                              </span>
+                              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                                Save ₹{opt.effectiveSavings}
+                              </span>
+                            </div>
                           </div>
-                          <div className="text-right font-mono flex-shrink-0 self-end sm:self-auto">
-                            <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100 block">
-                              ₹{opt.finalPrice.toLocaleString()}
-                            </span>
-                            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                              Save ₹{opt.effectiveSavings}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-4 text-center text-xs text-neutral-500 bg-neutral-50 dark:bg-neutral-900/40 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800">
+                        No store-published card or payment offers were verified
+                        for this listing.
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )}
@@ -2289,8 +2486,9 @@ export default function Home() {
                 Product Specifications
               </h3>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                Direct verified technical attributes extracted from{" "}
-                {activeProduct.store}.
+                {productUnavailable
+                  ? "No specifications could be read from the store page."
+                  : `Direct verified technical attributes extracted from ${activeProduct.store}.`}
               </p>
             </div>
 
@@ -2324,8 +2522,9 @@ export default function Home() {
               </div>
             ) : (
               <div className="p-6 text-center text-xs text-neutral-500 border border-dashed rounded-xl border-neutral-200 dark:border-neutral-800">
-                Specifications available in store leaflet. Inspect live listing
-                for complete details.
+                {productUnavailable
+                  ? "No specifications are available because the store page could not be read. Open the store to view the complete listing."
+                  : "Specifications available in store leaflet. Inspect live listing for complete details."}
               </div>
             )}
           </motion.div>
@@ -2349,21 +2548,25 @@ export default function Home() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {trendingDeals.map((deal) => (
-              <div
+              <a
                 key={deal.id}
-                onClick={() => {
+                href={deal.url || "#"}
+                target={deal.url ? "_blank" : undefined}
+                rel="noopener noreferrer"
+                title={
+                  deal.url
+                    ? `Open this deal on ${deal.store}`
+                    : deal.title
+                }
+                onClick={(event) => {
+                  if (deal.url) return;
+                  event.preventDefault();
                   if (deal.title) {
                     setSearchQuery(deal.title);
-                    executeQuery(deal.title);
-                  } else if (deal.id) {
-                    selectProduct(deal.id);
+                    executeSearch(deal.title);
                   }
                 }}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer flex gap-3.5 items-center bg-white dark:bg-[#121215] shadow-xs hover:border-neutral-300 dark:hover:border-neutral-700 ${
-                  activeProductId === deal.id && !liveResolvedProduct
-                    ? "border-emerald-500 ring-1 ring-emerald-500/30"
-                    : "border-neutral-200/80 dark:border-neutral-800"
-                }`}
+                className="p-3.5 rounded-xl border transition-all cursor-pointer flex gap-3.5 items-center bg-white dark:bg-[#121215] shadow-xs hover:border-neutral-300 dark:hover:border-neutral-700 border-neutral-200/80 dark:border-neutral-800"
               >
                 <img
                   src={deal.image}
@@ -2372,8 +2575,9 @@ export default function Home() {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between text-xs text-neutral-400">
-                    <span className="text-[11px] font-medium">
-                      {deal.store}
+                    <span className="text-[11px] font-medium flex items-center gap-1 min-w-0">
+                      <span className="truncate">{deal.store}</span>
+                      <ExternalLink className="h-2.5 w-2.5 flex-shrink-0" />
                     </span>
                     <span className="px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 text-[10px] font-mono font-bold">
                       {deal.badge}
@@ -2391,7 +2595,7 @@ export default function Home() {
                     </span>
                   </div>
                 </div>
-              </div>
+              </a>
             ))}
           </div>
         </div>

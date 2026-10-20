@@ -76,7 +76,12 @@ export interface ProductDetail {
   allTimeHigh: number | null;
   productImages: string[];
   prediction: {
-    badge: "BUY NOW" | "WAIT" | "FAIR PRICE";
+    badge:
+      | "BUY NOW"
+      | "WAIT"
+      | "FAIR PRICE"
+      | "VERIFY ON STORE"
+      | "NO HISTORY";
     detail: string;
     dropLikelihood: string;
   };
@@ -101,6 +106,9 @@ export interface ProductDetail {
   coupons: Coupon[];
   paymentOptions: PaymentMethod[];
   smartStack?: SmartStackCombo;
+  /** "unavailable" keeps the page shell visible while marking store data as unread. */
+  status?: "ok" | "unavailable";
+  statusMessage?: string;
 }
 
 export interface SmartStackCombo {

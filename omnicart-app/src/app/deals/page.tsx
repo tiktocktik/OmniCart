@@ -17,7 +17,6 @@ import {
   SlidersHorizontal,
   Sun,
   Moon,
-  Sparkles,
   Layers,
   MapPin,
   CheckCircle2,
@@ -173,11 +172,21 @@ export default function DealsPage() {
     return result;
   }, [deals, searchQuery, selectedStore, selectedCategory, sortBy]);
 
-  const handleInspectDeal = (deal: LiveDeal) => {
-    // Deal URLs point at aggregator posts, not store listings. Search the
-    // product title so the inspector returns live Amazon/Flipkart candidates.
+  const handleFindProduct = (deal: LiveDeal) => {
+    // Deal URLs point at aggregator posts. Searching the title is a separate
+    // action so a direct deal click never turns into an unexpected search.
     const target = deal.title || deal.url;
+    if (!target) return;
     router.push(`/?q=${encodeURIComponent(target)}`);
+  };
+
+  const handleDealLinkFallback = (
+    event: React.MouseEvent<HTMLAnchorElement>,
+    deal: LiveDeal,
+  ) => {
+    if (deal.url) return;
+    event.preventDefault();
+    handleFindProduct(deal);
   };
 
   return (
@@ -519,9 +528,17 @@ export default function DealsPage() {
                   </div>
 
                   {/* Product Image */}
-                  <div
-                    onClick={() => handleInspectDeal(deal)}
+                  <a
+                    href={deal.url || "#"}
+                    target={deal.url ? "_blank" : undefined}
+                    rel="noopener noreferrer"
+                    onClick={(event) => handleDealLinkFallback(event, deal)}
                     className="w-full h-48 p-5 bg-neutral-50 dark:bg-[#16161B] flex items-center justify-center cursor-pointer border-b border-neutral-100 dark:border-neutral-800/80 overflow-hidden"
+                    title={
+                      deal.url
+                        ? `Open this deal on ${deal.store}`
+                        : deal.title
+                    }
                   >
                     <img
                       src={deal.image}
@@ -529,7 +546,7 @@ export default function DealsPage() {
                       loading="lazy"
                       className="max-h-full max-w-full object-contain group-hover:scale-105 transition-transform duration-200"
                     />
-                  </div>
+                  </a>
 
                   {/* Card Content */}
                   <div className="p-4 flex-1 flex flex-col justify-between">
@@ -546,11 +563,20 @@ export default function DealsPage() {
 
                       {/* Title */}
                       <h3
-                        onClick={() => handleInspectDeal(deal)}
-                        className="text-xs font-semibold text-neutral-900 dark:text-neutral-100 line-clamp-2 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer"
+                        className="text-xs font-semibold text-neutral-900 dark:text-neutral-100 line-clamp-2"
                         title={deal.title}
                       >
-                        {deal.title}
+                        <a
+                          href={deal.url || "#"}
+                          target={deal.url ? "_blank" : undefined}
+                          rel="noopener noreferrer"
+                          onClick={(event) =>
+                            handleDealLinkFallback(event, deal)
+                          }
+                          className="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                        >
+                          {deal.title}
+                        </a>
                       </h3>
                     </div>
 
@@ -576,23 +602,26 @@ export default function DealsPage() {
 
                       {/* Action Buttons */}
                       <div className="grid grid-cols-2 gap-2 mt-3 pt-2">
-                        <button
-                          onClick={() => handleInspectDeal(deal)}
+                        <a
+                          href={deal.url || "#"}
+                          target={deal.url ? "_blank" : undefined}
+                          rel="noopener noreferrer"
+                          onClick={(event) =>
+                            handleDealLinkFallback(event, deal)
+                          }
                           className="w-full py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-neutral-950 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer shadow-xs"
                         >
-                          <Sparkles className="h-3 w-3" />
-                          <span>Stack & Buy</span>
-                        </button>
+                          <ExternalLink className="h-3 w-3" />
+                          <span>Open Deal</span>
+                        </a>
 
-                        <a
-                          href={deal.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          onClick={() => handleFindProduct(deal)}
                           className="w-full py-2 px-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 font-medium text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer text-center"
                         >
-                          <span>Deal Post</span>
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
+                          <Search className="h-3 w-3" />
+                          <span>Find Product</span>
+                        </button>
                       </div>
                     </div>
                   </div>
