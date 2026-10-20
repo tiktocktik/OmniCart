@@ -55,7 +55,7 @@ import {
   CompetitorPrice,
   PurchaseOption,
 } from "@/data/sampleData";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, dealProductHref } from "@/lib/api";
 
 type TimeRange = "1M" | "6M" | "1Y" | "3Y" | "ALL";
 
@@ -2550,12 +2550,12 @@ export default function Home() {
             {trendingDeals.map((deal) => (
               <a
                 key={deal.id}
-                href={deal.url || "#"}
+                href={deal.url ? dealProductHref(deal.url) : "#"}
                 target={deal.url ? "_blank" : undefined}
                 rel="noopener noreferrer"
                 title={
                   deal.url
-                    ? `Open this deal on ${deal.store}`
+                    ? `Open the ${deal.store} product page`
                     : deal.title
                 }
                 onClick={(event) => {

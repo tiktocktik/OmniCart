@@ -1,7 +1,8 @@
+import urllib.parse
 import urllib.request
 import re
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from bs4 import BeautifulSoup
 
 HEADERS = {
@@ -13,6 +14,211 @@ HEADERS = {
 _CACHE_DEALS: List[Dict[str, Any]] = []
 _CACHE_TIMESTAMP: float = 0.0
 CACHE_TTL_SECONDS = 600.0  # 10 minutes
+
+# Resolved retailer product URLs are kept longer than the deal feed: the
+# aggregator post is only a discovery surface, while the product page is what
+# the user actually wants to open.
+_PRODUCT_URL_CACHE: Dict[str, Tuple[float, str]] = {}
+_PRODUCT_URL_FAILED_AT: Dict[str, float] = {}
+PRODUCT_URL_TTL_SECONDS = 6 * 60 * 60
+PRODUCT_URL_FAILURE_TTL_SECONDS = 60.0
+
+DEAL_HOST_SUFFIXES = ("desidime.com", "dealsmagnet.com")
+RETAILER_HOST_SUFFIXES = (
+    "amazon.in",
+    "amazon.com",
+    "flipkart.com",
+    "myntra.com",
+    "ajio.com",
+    "nykaa.com",
+    "nykaafashion.com",
+    "tatacliq.com",
+    "jiomart.com",
+    "croma.com",
+)
+TRACKING_QUERY_PARAMS = {
+    "tag",
+    "ascsubtag",
+    "linkcode",
+    "ref",
+    "ref_",
+    "affid",
+    "affextparam1",
+    "affextparam2",
+    "subid",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "clickid",
+    "gclid",
+    "fbclid",
+    "otracker",
+    "otracker1",
+    "icid",
+}
+
+
+def _host_matches(host: str, suffixes: Tuple[str, ...]) -> bool:
+    """Exact host or dot-suffix match, never a substring match."""
+    clean = (host or "").lower().split(":", 1)[0].strip(".")
+    return any(clean == suffix or clean.endswith("." + suffix) for suffix in suffixes)
+
+
+def _fetch_html(url: str, timeout: float = 12.0) -> Tuple[str, str]:
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return resp.geturl(), resp.read().decode(charset, errors="ignore")
+
+
+def _follow_redirect(url: str, timeout: float = 12.0) -> Optional[str]:
+    """Follow an aggregator's outbound link and return the final retailer URL."""
+    for method in ("HEAD", "GET"):
+        try:
+            req = urllib.request.Request(url, headers=HEADERS, method=method)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.geturl()
+        except Exception:
+            continue
+    return None
+
+
+def extract_deal_redirect(page_url: str, html: str) -> Optional[str]:
+    """Return the aggregator's outbound "buy" URL from a deal post.
+
+    DesiDime uses a visible visit.desidime.com link. Dealsmagnet uses a button
+    whose data-code feeds its /buy endpoint. Both then redirect to the retailer.
+    """
+    if _host_matches(urllib.parse.urlsplit(page_url).netloc, RETAILER_HOST_SUFFIXES):
+        return page_url
+
+    soup = BeautifulSoup(html, "html.parser")
+    page_host = urllib.parse.urlsplit(page_url).netloc
+
+    if _host_matches(page_host, ("desidime.com",)):
+        candidates = []
+        for anchor in soup.find_all("a", href=True):
+            href = anchor["href"]
+            if "visit.desidime.com/visit/" not in href:
+                continue
+            text = anchor.get_text(" ", strip=True).lower()
+            candidates.append((0 if "buy now" in text else 1, href))
+        if candidates:
+            candidates.sort(key=lambda item: item[0])
+            return urllib.parse.urljoin(page_url, candidates[0][1])
+
+    if _host_matches(page_host, ("dealsmagnet.com",)):
+        button = soup.find("button", class_=re.compile(r"(?:^|\s)buy-button(?:\s|$)"))
+        if button and button.get("data-code"):
+            return "https://www.dealsmagnet.com/buy?" + button["data-code"]
+
+    # Generic fallback for other aggregators: use a clearly labelled outbound
+    # "buy" link, never a navigation/footer link.
+    for anchor in soup.find_all("a", href=True):
+        text = anchor.get_text(" ", strip=True).lower()
+        href = anchor["href"]
+        if not href.startswith("http"):
+            continue
+        if not any(label in text for label in ("buy now", "get deal", "shop now", "go to store")):
+            continue
+        if _host_matches(urllib.parse.urlsplit(href).netloc, DEAL_HOST_SUFFIXES):
+            continue
+        return href
+
+    return None
+
+
+def clean_product_url(raw_url: str) -> Optional[str]:
+    """Normalize a retailer URL and strip tracking, or return None.
+
+    Only known retailer hosts are accepted. This keeps the redirect endpoint
+    from becoming an open URL proxy.
+    """
+    if not raw_url:
+        return None
+
+    parsed = urllib.parse.urlsplit(raw_url.strip())
+    if parsed.scheme not in ("http", "https"):
+        return None
+    host = parsed.netloc.lower()
+    if not _host_matches(host, RETAILER_HOST_SUFFIXES):
+        return None
+
+    if _host_matches(host, ("amazon.in", "amazon.com")):
+        match = re.search(r"/(?:dp|gp/product|d)/([A-Z0-9]{10})", parsed.path, re.I)
+        if not match:
+            return None
+        domain = "www.amazon.in" if host.endswith("amazon.in") else "www.amazon.com"
+        return f"https://{domain}/dp/{match.group(1).upper()}"
+
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    filtered = [
+        (key, value)
+        for key, value in query
+        if key.lower() not in TRACKING_QUERY_PARAMS
+    ]
+    return urllib.parse.urlunsplit(
+        (
+            parsed.scheme or "https",
+            parsed.netloc,
+            parsed.path,
+            urllib.parse.urlencode(filtered, doseq=True),
+            "",
+        )
+    )
+
+
+def resolve_deal_product_url(deal_url: str) -> Optional[str]:
+    """Resolve a deal post to the retailer product page, with a small cache.
+
+    This performs one page fetch plus one redirect follow. It is called only
+    when the user opens a deal, so the initial /deals feed stays fast.
+    """
+    raw = (deal_url or "").strip()
+    if not raw:
+        return None
+
+    now = time.time()
+    cached = _PRODUCT_URL_CACHE.get(raw)
+    if cached and (now - cached[0]) < PRODUCT_URL_TTL_SECONDS:
+        return cached[1]
+
+    failed_at = _PRODUCT_URL_FAILED_AT.get(raw)
+    if failed_at and (now - failed_at) < PRODUCT_URL_FAILURE_TTL_SECONDS:
+        return None
+
+    direct = clean_product_url(raw)
+    if direct:
+        _PRODUCT_URL_CACHE[raw] = (now, direct)
+        _PRODUCT_URL_FAILED_AT.pop(raw, None)
+        return direct
+
+    if not _host_matches(urllib.parse.urlsplit(raw).netloc, DEAL_HOST_SUFFIXES):
+        _PRODUCT_URL_FAILED_AT[raw] = now
+        return None
+
+    product_url: Optional[str] = None
+    try:
+        page_url, html = _fetch_html(raw)
+        outbound = extract_deal_redirect(page_url, html)
+        if outbound:
+            final_url = _follow_redirect(outbound)
+            product_url = clean_product_url(final_url or "")
+    except Exception:
+        product_url = None
+
+    if product_url:
+        if len(_PRODUCT_URL_CACHE) > 500:
+            _PRODUCT_URL_CACHE.clear()
+        _PRODUCT_URL_CACHE[raw] = (now, product_url)
+        _PRODUCT_URL_FAILED_AT.pop(raw, None)
+        return product_url
+
+    _PRODUCT_URL_FAILED_AT[raw] = now
+    return None
+
 
 def infer_deal_category(title: str) -> str:
     """Infer a category from whole words in the title.

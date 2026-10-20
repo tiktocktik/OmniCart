@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, dealProductHref } from "@/lib/api";
 import {
   Flame,
   ArrowLeft,
@@ -529,14 +529,14 @@ export default function DealsPage() {
 
                   {/* Product Image */}
                   <a
-                    href={deal.url || "#"}
+                    href={deal.url ? dealProductHref(deal.url) : "#"}
                     target={deal.url ? "_blank" : undefined}
                     rel="noopener noreferrer"
                     onClick={(event) => handleDealLinkFallback(event, deal)}
                     className="w-full h-48 p-5 bg-neutral-50 dark:bg-[#16161B] flex items-center justify-center cursor-pointer border-b border-neutral-100 dark:border-neutral-800/80 overflow-hidden"
                     title={
                       deal.url
-                        ? `Open this deal on ${deal.store}`
+                        ? `Open the ${deal.store} product page`
                         : deal.title
                     }
                   >
@@ -567,7 +567,7 @@ export default function DealsPage() {
                         title={deal.title}
                       >
                         <a
-                          href={deal.url || "#"}
+                          href={deal.url ? dealProductHref(deal.url) : "#"}
                           target={deal.url ? "_blank" : undefined}
                           rel="noopener noreferrer"
                           onClick={(event) =>
@@ -603,7 +603,7 @@ export default function DealsPage() {
                       {/* Action Buttons */}
                       <div className="grid grid-cols-2 gap-2 mt-3 pt-2">
                         <a
-                          href={deal.url || "#"}
+                          href={deal.url ? dealProductHref(deal.url) : "#"}
                           target={deal.url ? "_blank" : undefined}
                           rel="noopener noreferrer"
                           onClick={(event) =>
@@ -612,7 +612,7 @@ export default function DealsPage() {
                           className="w-full py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-neutral-950 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer shadow-xs"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          <span>Open Deal</span>
+                          <span>Open Product</span>
                         </a>
 
                         <button

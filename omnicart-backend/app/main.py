@@ -1,9 +1,13 @@
+import html
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
+
 from .models import ProductResolution, ResolveRequest
 from .resolver import resolve_product_pipeline
 from .search_engine import search_products
-from .deal_scraper import get_live_deals
+from .deal_scraper import get_live_deals, resolve_deal_product_url
 
 app = FastAPI(
     title="OmniCart Local Intelligence API",
@@ -35,6 +39,37 @@ def get_deals(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/deals/go")
+def go_to_deal_product(url: str = Query(..., max_length=2000, description="Deal post URL")):
+    """Resolve a deal post to its retailer product page and redirect there.
+
+    The deal feed keeps third-party post URLs as source attribution. The user
+    click goes through this endpoint so the final page is the actual product,
+    not the aggregator post. Only known deal hosts and retailer hosts are
+    accepted (see resolve_deal_product_url).
+    """
+    product_url = resolve_deal_product_url(url)
+    if not product_url:
+        safe_deal_url = html.escape(url, quote=True)
+        return HTMLResponse(
+            status_code=404,
+            content=(
+                "<!doctype html><html><head><meta charset=\"utf-8\">"
+                "<title>Product page unavailable</title></head>"
+                "<body style=\"font-family: system-ui, sans-serif; max-width: 640px; "
+                "margin: 60px auto; padding: 0 20px; line-height: 1.5;\">"
+                "<h1>Product page unavailable</h1>"
+                "<p>OmniCart could not resolve this deal to a retailer product page. "
+                "The deal post is still available, or use <strong>Find Product</strong> "
+                "on the Deals page.</p>"
+                f"<p><a href=\"{safe_deal_url}\" rel=\"noopener noreferrer\">"
+                "Open the deal post</a></p>"
+                "</body></html>"
+            ),
+        )
+    return RedirectResponse(product_url, status_code=302)
 
 @app.get("/search")
 def search(
