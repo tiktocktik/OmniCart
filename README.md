@@ -21,6 +21,11 @@ India's product price inspector. Paste a product link or an Amazon ASIN and Omni
 
 ## 🚀 Quick Start
 
+### One-click start (Windows)
+Double-click `start.bat` in the project root. It starts the backend and
+frontend, waits until both are ready, and opens http://localhost:3000.
+Use `start.bat prod` to build and run the production server.
+
 ### Backend (FastAPI — port 8000)
 ```bash
 cd omnicart-backend
