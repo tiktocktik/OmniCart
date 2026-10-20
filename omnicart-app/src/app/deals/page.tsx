@@ -21,6 +21,7 @@ import {
   Layers,
   MapPin,
   CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 
 interface LiveDeal {
@@ -47,6 +48,7 @@ export default function DealsPage() {
   const router = useRouter();
   const [deals, setDeals] = useState<LiveDeal[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [userPincode, setUserPincode] = useState<string>("110001");
@@ -64,6 +66,7 @@ export default function DealsPage() {
   const fetchDealsData = async (forceRefresh: boolean = false) => {
     if (forceRefresh) setRefreshing(true);
     else setLoading(true);
+    setLoadError(null);
 
     try {
       const url = `${API_BASE}/deals?limit=50${forceRefresh ? "&refresh=true" : ""}`;
@@ -73,9 +76,15 @@ export default function DealsPage() {
         if (Array.isArray(data)) {
           setDeals(data);
         }
+      } else {
+        setLoadError(
+          `The deals service returned HTTP ${res.status}. Try refreshing.`,
+        );
       }
-    } catch (err) {
-      console.error("Failed to fetch live deals", err);
+    } catch {
+      setLoadError(
+        `Could not reach the OmniCart backend at ${API_BASE}. Start the backend and retry.`,
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -428,6 +437,24 @@ export default function DealsPage() {
                 className="p-4 rounded-2xl border border-neutral-200/80 dark:border-neutral-800 bg-white dark:bg-[#121216] animate-pulse h-80"
               />
             ))}
+          </div>
+        ) : loadError ? (
+          <div className="py-20 text-center flex flex-col items-center justify-center border border-dashed border-red-300 dark:border-red-900/60 rounded-3xl bg-red-50/50 dark:bg-red-950/10">
+            <div className="h-12 w-12 rounded-2xl bg-red-100 dark:bg-red-900/40 flex items-center justify-center text-red-600 dark:text-red-300 mb-3">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h3 className="text-base font-bold text-neutral-900 dark:text-neutral-100">
+              Could not load deals
+            </h3>
+            <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-1 max-w-sm">
+              {loadError}
+            </p>
+            <button
+              onClick={() => fetchDealsData(true)}
+              className="mt-4 px-4 py-2 text-xs font-semibold rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 transition-colors shadow-xs cursor-pointer"
+            >
+              Retry
+            </button>
           </div>
         ) : filteredDeals.length === 0 ? (
           <div className="py-20 text-center flex flex-col items-center justify-center border border-dashed border-neutral-300 dark:border-neutral-800 rounded-3xl bg-white/50 dark:bg-[#101014]/50">

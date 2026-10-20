@@ -1,32 +1,56 @@
-# OmniCart Session Handoff Document
+# Handoff
 
-## 1. Current System & Service Status
-- **Backend Service (FastAPI)**: Running on `http://127.0.0.1:8000` (PID 19880).
-  - Health check: `curl http://127.0.0.1:8000/health` → `{"status":"ok"}`
-  - Deals API: `curl http://127.0.0.1:8000/deals?limit=5` → 200 OK with authentic product images, categories, and glitch metadata.
-- **Frontend Service (Next.js 16)**: Running on `http://localhost:3000` (PID 27712).
-  - Inspector: `http://localhost:3000` (Home page)
-  - Dedicated Deals Page: `http://localhost:3000/deals` (Live drops with filters, sorting, crazy drops toggle)
-- **TypeScript & Linting**: `npx tsc --noEmit` compiles with 0 errors.
+## Completed
 
-## 2. Key Technical Improvements Implemented in this Milestone
-1. **Dedicated Live Deals Page (`/deals`)**:
-   - Built [`omnicart-app/src/app/deals/page.tsx`](file:///D:/Workspace/Projects/OmniCart/omnicart-app/src/app/deals/page.tsx).
-   - Shows active drops with store pills (Amazon, Flipkart, Online/Direct) and category pills.
-   - Includes `⚡ Crazy Drops Only` toggle filter and multi-sort.
-   - Dual actions: `Stack & Buy` (routes into OmniCart inspector with multi-seller comparison & card stack) and `Store Link`.
-2. **5-Tier Flash Deal & Glitch Detection Engine**:
-   - Added `classify_flash_deal()` in [`omnicart-backend/app/deal_scraper.py`](file:///D:/Workspace/Projects/OmniCart/omnicart-backend/app/deal_scraper.py).
-   - Identifies `⚡ 3-DIGIT DROP` (4-digit price falling below ₹1,000), `⚡ 2-DIGIT DROP` (< ₹100), `🔥 4-DIGIT LOOT`, and `🚨 MEGA DROP` (≥ 70% off).
-   - Extracts live DesiDime community heat score (`heatScore`, e.g. `253°`, `306°`).
-3. **Purged Unsplash Fallbacks**:
-   - Replaced all Unsplash placeholders across `resolver.py`, `amazon_scraper.py`, `universal_scraper.py`, and `sampleData.ts` with authentic product CDN assets.
-   - Fixed Libra 5.5L Glass Air Fryer MRP and mapped to authentic Amazon CDN asset.
-4. **Social & Community Ingest Framework**:
-   - Built [`omnicart-backend/app/social_ingest.py`](file:///D:/Workspace/Projects/OmniCart/omnicart-backend/app/social_ingest.py) and created [`.env.example`](file:///D:/Workspace/Projects/OmniCart/omnicart-backend/.env.example).
-   - Connectors for Reddit (OAuth2), X/Twitter (Playwright session cookie), and Telegram MTProto (`telethon` client to bypass Indian ISP web blocks).
-   - Automatic shortlink expansion (`amzn.to`, `fkrt.it`, `bit.ly`, `t.co`) and affiliate tag stripping.
+### M0 — Setup and hygiene
+- Pinned dependencies, fixed README startup, removed tracked DB and dead tables.
+- Env-driven paths and secrets; no `CERT_NONE`; stable `hashlib` IDs.
+- Frontend backend URL is centralised in `src/lib/api.ts`.
 
-## 3. Recommended Next Actions
-- User can populate `omnicart-backend/.env` with Reddit OAuth / Twitter session / Telegram MTProto credentials when ready to activate live social streaming.
-- Implement background push/webhook notifications for `EXTREME` urgency drops (≥ 75% off or 3-digit drops).
+### M1 — Truthful data
+- Removed all hard-coded demo products and fabricated defaults.
+- Amazon robot-check detection; explicit `status="unavailable"` results.
+- Verified history only; no estimated charts.
+- Verified coupons only; no invented bank offers.
+- Personal card portfolio removed.
+- Frontend and Deals page now show real error/unavailable states.
+
+## Verified
+
+Commands run in `D:\Workspace\Projects\OmniCart`:
+
+- `python -c "import app.main; ..."` → backend imports OK.
+- `python -m pytest -q` → 3 skipped (the fixture tests are opt-in).
+- `npx tsc --noEmit` → no errors.
+- `npm run build` → compiled successfully, 3 static routes.
+- FastAPI TestClient:
+  - `/health` → `200 {"status":"ok",...}`
+  - `/resolve?query=iphone 15` → `400` with a link-only message.
+  - `/resolve?query=https://www.amazon.in/dp/B0TEST1234` → `200`,
+    `status="unavailable"`, `live_price=0.0`, message: Amazon returned a
+    robot-check page. This is the intended honest outcome.
+
+Offline resolver checks (mocked sources):
+- blocked Amazon → `unavailable`, price 0.
+- successful Amazon → real title/price, rating 0 (not invented), history
+  `UNAVAILABLE`, no sellers, no fake image.
+- blocked Croma → `unavailable`, price 0.
+
+## Not verified
+
+- A real live Amazon product with a readable price from this network (Amazon
+  served a robot check, which is expected).
+- Flipkart product fetching (not implemented; planned for M2).
+- Browser E2E flows (planned for M4).
+- A fresh-venv install from PyPI (packages are already installed here).
+
+## Next
+
+M2 — input understanding:
+- ASIN regex `^B0[A-Z0-9]{8}$`.
+- Hostname-based URL detection.
+- Short-link expansion.
+- `/search?q=` with a pick-a-result UI.
+- `?q=` handling for the Deals handoff.
+- Flipkart fetcher or explicit unsupported state.
+- Offline classifier tests.

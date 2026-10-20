@@ -27,6 +27,25 @@ def fetch_live_amazon_product(asin: str, canonical_url: str, pincode: str = "110
         with urllib.request.urlopen(req, timeout=12) as response:
             html = response.read().decode("utf-8", errors="ignore")
 
+        lower_html = html.lower()
+        if any(
+            marker in lower_html
+            for marker in (
+                "api-services-support@amazon.com",
+                "robot check",
+                "type the characters you see",
+                "enter the characters you see",
+                "/errors/validatecaptcha",
+            )
+        ):
+            return {
+                "status": "unavailable",
+                "status_message": (
+                    "Amazon returned a robot-check page instead of the product. "
+                    "Try again later or open the store directly."
+                ),
+            }
+
         soup = BeautifulSoup(html, "html.parser")
 
         # 1. Real Title
@@ -100,7 +119,8 @@ def fetch_live_amazon_product(asin: str, canonical_url: str, pincode: str = "110
         if extracted_mrp > live_price:
             regular_price = round(extracted_mrp, 2)
         elif regular_price <= live_price:
-            regular_price = round(live_price * 1.25, 2)
+            # No readable MRP: do not invent a discount.
+            regular_price = round(live_price, 2)
 
         # 4. Product Images
         gallery_images: List[str] = []
@@ -152,17 +172,17 @@ def fetch_live_amazon_product(asin: str, canonical_url: str, pincode: str = "110
                 if len(gallery_images) >= 4:
                     break
 
-        primary_image = gallery_images[0] if gallery_images else "https://m.media-amazon.com/images/I/71TaUujFs6L._SL1254_.jpg"
+        primary_image = gallery_images[0] if gallery_images else None
 
         # 5. Rating & Reviews
-        rating = 4.2
+        rating = 0.0
         rating_el = soup.find("span", {"data-hook": "rating-out-of-text"})
         if rating_el:
             r_match = re.search(r"([\d.]+)\s+out", rating_el.get_text(strip=True))
             if r_match:
                 rating = float(r_match.group(1))
 
-        ratings_count = 140
+        ratings_count = 0
         rc_el = soup.find(id="acrCustomerReviewText")
         if rc_el:
             digits = re.sub(r"[^\d]", "", rc_el.get_text(strip=True))
@@ -170,7 +190,7 @@ def fetch_live_amazon_product(asin: str, canonical_url: str, pincode: str = "110
                 ratings_count = int(digits)
 
         # 6. Seller Name
-        seller_name = "Retail Fashion Hub (Amazon Fulfilled)"
+        seller_name = None
         merchant_el = soup.find(id="merchant-info")
         if merchant_el:
             seller_text = merchant_el.get_text(" ", strip=True)
@@ -180,7 +200,7 @@ def fetch_live_amazon_product(asin: str, canonical_url: str, pincode: str = "110
                     seller_name = clean_seller
 
         # 7. Category Breadcrumbs
-        category = "Fashion & Apparel"
+        category = ""
         wayfinding = soup.find(id="wayfinding-breadcrumbs_feature_div")
         if wayfinding:
             cats = [a.get_text(strip=True) for a in wayfinding.find_all("a")]
@@ -401,14 +421,23 @@ def fetch_live_amazon_product(asin: str, canonical_url: str, pincode: str = "110
             highlights.append(f"Model ID: {specifications['Item model number']}")
 
         if not highlights:
-            highlights = [f"Official {seller_name} listing", "Prime Fast & Free Shipping Eligible", "100% Genuine Certified Product"]
+            highlights = []
+
+        if live_price <= 0:
+            return {
+                "status": "unavailable",
+                "status_message": (
+                    "Amazon did not expose a readable price for this product. "
+                    "Open the store to check the price."
+                ),
+            }
 
         return {
             "title": title,
-            "live_price": live_price if live_price > 0 else 449.0,
-            "regular_price": regular_price if regular_price > 0 else 699.0,
-            "image_url": primary_image,
-            "gallery_images": gallery_images[:5] if gallery_images else [primary_image],
+            "live_price": live_price,
+            "regular_price": regular_price,
+            "image_url": primary_image or "",
+            "gallery_images": gallery_images[:5],
             "rating": rating,
             "ratings_count": ratings_count,
             "seller_name": seller_name,
@@ -417,6 +446,7 @@ def fetch_live_amazon_product(asin: str, canonical_url: str, pincode: str = "110
             "purchase_options": purchase_options,
             "specifications": specifications,
             "highlights": highlights[:6],
+            "status": "ok",
         }
 
     except Exception:

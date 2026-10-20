@@ -23,7 +23,7 @@ export interface Coupon {
   source: string;
   discountText: string;
   discountAmount: number;
-  successRate: number;
+  successRate: number | null;
 }
 
 export interface PaymentMethod {

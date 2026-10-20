@@ -1,7 +1,15 @@
+import os
+
 import pytest
+
 from app.resolver import resolve_product_pipeline
 from app.qc_pool import get_qc_pool
 import app.resolver as resolver
+
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("PRICE_AGGREGATOR_DIR"),
+    reason="PRICE_AGGREGATOR_DIR is not configured; quick-commerce fixtures are test-only",
+)
 
 
 def test_qc_pool_fixture_listings():
@@ -16,6 +24,7 @@ def test_qc_pool_fixture_listings():
 
 
 def test_resolver_injects_quick_commerce_competitors(monkeypatch):
+    monkeypatch.setenv("OMNICART_ALLOW_FIXTURES", "1")
     fake_amazon_product = {
         "title": "Amul Taaza Milk 500ml",
         "live_price": 35.0,

@@ -20,13 +20,9 @@ SECRET_STR = os.environ.get("PRICEHISTORY_SECRET", "").strip()
 KEY = hashlib.sha256(SECRET_STR.encode("utf-8")).digest() if SECRET_STR else None
 aesgcm = AESGCM(KEY) if KEY else None
 
-# Known canonical slugs for instant high-speed resolution
-CURATED_SLUG_MAP = {
-    "sony-wh1000xm5": "sony-wh-1000xm5-wireless-industry-leading-noise-canceling-headphones-with-auto-noise-canceling-optimizer-crystal-clear-hands-free-calling-and-alexa-voice-control-black",
-    "b09xs7jwhh": "sony-wh-1000xm5-wireless-industry-leading-noise-canceling-headphones-with-auto-noise-canceling-optimizer-crystal-clear-hands-free-calling-and-alexa-voice-control-black",
-    "pigeon-air-fryer-42l": "pigeon-healthifry-digital-airfryer-4-2-l-1200w-air-fryer",
-    "b0c8jm4tfh": "envie-infinite-plus-aa-high-capacity-3200mah-ni-mh-rechargeable-ready-to-use-battery-pack-of-4",
-}
+# Optional operator-provided slugs. Empty by default: the signed API resolves
+# real URLs without shipping demo-product mappings.
+CURATED_SLUG_MAP: Dict[str, str] = {}
 
 def generate_signature(url_str: str, body: str = "") -> Optional[str]:
     """Generates AES-GCM encrypted signature for PriceHistoryApp API."""
@@ -165,18 +161,11 @@ def fetch_real_aggregator_history(query_or_url: str) -> Optional[Dict[str, Any]]
     slug = None
     lower_query = query_or_url.lower()
 
-    # 1. Check fast curated map with flexible multi-token matching
-    if "b09xs7jwhh" in lower_query or ("sony" in lower_query and ("xm5" in lower_query or "1000xm5" in lower_query or "headphone" in lower_query)):
-        slug = CURATED_SLUG_MAP["sony-wh1000xm5"]
-    elif "pigeon" in lower_query and ("healthifry" in lower_query or "fryer" in lower_query or "air" in lower_query):
-        slug = CURATED_SLUG_MAP["pigeon-air-fryer-42l"]
-    elif "b0c8jm4tfh" in lower_query or ("envie" in lower_query and ("battery" in lower_query or "aa" in lower_query)):
-        slug = CURATED_SLUG_MAP["b0c8jm4tfh"]
-    else:
-        for k, s in CURATED_SLUG_MAP.items():
-            if k in lower_query:
-                slug = s
-                break
+    # 1. Check any operator-provided curated map (empty by default).
+    for k, s in CURATED_SLUG_MAP.items():
+        if k in lower_query:
+            slug = s
+            break
 
     # 2. Try signed API for Amazon / Flipkart URLs
     if not slug and ("amazon.in" in lower_query or "flipkart.com" in lower_query):

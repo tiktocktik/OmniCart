@@ -1,37 +1,67 @@
-# OmniCart Development Plan & Milestone Roadmap
+# OmniCart plan
 
-## Milestone 1: Universal Price Intelligence & Smart Stack (Completed)
-- [x] Multi-year historical price aggregator integration (PriceBefore / BuyHatke archives).
-- [x] Strict 1:1 cross-marketplace competitor arbitrage engine (Amazon, Flipkart, Myntra, Ajio, Westside, Tata).
-- [x] Multi-layer discount stacking: Store coupons + instant bank card discounts (HDFC/ICICI/Axis) + UPI arbitrage.
-- [x] Pincode & hyperlocal dark-store delivery promises (Zepto, Blinkit, Instamart).
+Rules: one milestone at a time. Verify with real inputs. Commit only when the
+acceptance checks pass. Never fill a missing value with a plausible guess.
 
-## Milestone 2: Live Deals, Flash Glitches & Dedicated Deals Page (Completed)
-- [x] **Real-Time Community & Algorithmic Scraper** (`deal_scraper.py`):
-  - DesiDime community drops parsed directly from `.deal-card` DOM with clean titles and authentic merchant CDN images.
-  - Dealsmagnet algorithmic lightning price drops extracted with calculated true discount and regular price.
-  - In-memory 10-minute cache with instant `?refresh=true` force-invalidation.
-- [x] **5-Tier Flash Deal & Glitch Detection Engine** (`classify_flash_deal`):
-  - Digit boundary collapses: `⚡ 3-DIGIT DROP` (4-digit → < ₹1,000), `⚡ 2-DIGIT DROP` (3-digit → < ₹100), `🔥 4-DIGIT LOOT`.
-  - DesiDime community thermal velocity tracking: Live heat score (`heatScore` e.g. 250°+, 1500°+) for viral glitches.
-  - Anomaly discount threshold: `🚨 MEGA DROP` (≥ 70% true drop).
-- [x] **Dedicated Deals Page** (`omnicart-app/src/app/deals/page.tsx`):
-  - Accessible at `http://localhost:3000/deals`.
-  - Client-side real-time search across deal titles, brands, and stores.
-  - Filter pills for stores (Amazon, Flipkart, Online/Direct) and auto-inferred categories.
-  - `⚡ Crazy Drops Only` toggle filter to view only extreme drops and pricing glitches.
-  - Multi-sort (Highest Discount %, Max Savings ₹, Price: Low to High, Price: High to Low).
-  - Dual action buttons: "Stack & Buy" (opens OmniCart inspector) and "Store Link" (direct external checkout).
-- [x] **Elimination of Unsplash Stock Placeholders**:
-  - Replaced all Unsplash fallbacks with authentic manufacturer CDN assets across `resolver.py`, `amazon_scraper.py`, `universal_scraper.py`, and `sampleData.ts`.
-  - Libra 5.5L Glass Air Fryer mapped directly to authentic Amazon CDN asset `71TaUujFs6L._SL1254_.jpg` with corrected MRP (₹12,999).
-- [x] **Social & Community Ingestion Framework** (`social_ingest.py`):
-  - Reddit OAuth stream connector for `r/dealsindia`, `r/IndianGaming`, `r/IndianBeautyDeals`.
-  - Headless Playwright X/Twitter session stream for `@deals_india`, `@indiantweeter`, `@desidimedeals`.
-  - Telegram native MTProto client (`telethon`) to stream massive public channels (`@dealsmagnet`, `@LootDealsOfficial`, `@DealBeeOfficial`) bypassing Indian ISP DNS/SNI web blocks.
-  - Template `.env.example` created for local credential storage without exposing passwords.
+## M0 — Setup and hygiene ✅
 
-## Milestone 3: Autonomous Sniper & Notification Alerts (Upcoming)
-- [ ] Read active Reddit/X/Telegram credentials from `.env` and spawn continuous background listeners.
-- [ ] Telegram Bot / Desktop WebPush alerts when a verified `3-DIGIT DROP` or `75%+ GLITCH` occurs.
-- [ ] User custom price alert watchlists with target price threshold notifications.
+- Pinned `requirements.txt`.
+- Removed `--reload` from the README.
+- Removed the tracked `omnicart.db` and ignored local databases.
+- Removed `init_db()` and the unused `price_history` / `coupons_cache` tables.
+- Replaced hard-coded `D:/...` paths with `PRICE_AGGREGATOR_DIR`.
+- Moved the price-history signing secret to `PRICEHISTORY_SECRET`.
+- Removed `ssl.CERT_NONE`.
+- Centralised the frontend backend URL in `src/lib/api.ts` (`NEXT_PUBLIC_API_BASE`).
+- Replaced Python `hash()` IDs with `hashlib`.
+
+Acceptance: backend imports, `/health` returns 200, `npm run build` passes.
+
+## M1 — Truthful data ✅
+
+- Deleted the hard-coded Tata olive oil, Pigeon air fryer and Sony XM5 products.
+- Deleted the 449/699 Amazon price fallbacks and the `live_price * 1.25` fake MRP.
+- Added Amazon robot-check / captcha detection.
+- Removed fabricated ratings, review counts, sellers, categories, images and
+  highlights from both scrapers.
+- Removed estimated price histories. History is now `UNAVAILABLE` unless a real
+  source returns data.
+- Removed invented coupons and success rates. Only coupons scraped from the
+  product page are returned.
+- Removed the personal card portfolio. Payment arbitrage returns no options
+  unless a real offer exists.
+- Removed demo slugs from the history resolver.
+- Removed quick-commerce fixtures from production; they require
+  `OMNICART_ALLOW_FIXTURES=1` and are test-only.
+- Frontend now shows an explicit error/unavailable banner with an Open-store
+  link instead of silently showing a sample product.
+- Deals page now shows a real error with Retry when the backend is down.
+- README updated to match the actual behaviour.
+
+Acceptance: a blocked Amazon request returns `status="unavailable"` and never a
+made-up price; text input returns HTTP 400; `tsc` and `next build` pass.
+
+## M2 — Understanding input (next)
+
+- ASIN only if it matches `^B0[A-Z0-9]{8}$`.
+- Detect URLs by parsed hostname, with exact/suffix host matching.
+- Expand `amzn.to`, `dl.flipkart.com` and `fkrt.it` redirects.
+- Add `GET /search?q=` returning candidates; UI lets the user pick one.
+- Read `?q=` on page load so Deals → Stack & Buy works.
+- Add a Flipkart fetcher or an explicit "store not supported" state.
+- Offline tests for every classifier rule (positive and negative).
+
+## M3 — Speed and robustness
+
+- Remove the deal scrape from `/resolve`; refresh deals in the background with a lock.
+- Run independent fetches in parallel under one total deadline.
+- Add a per-URL TTL cache.
+- Frontend: `AbortController`, request IDs to ignore stale responses, a 15 s timeout.
+- Split `page.tsx`, memoize chart data, keep search input state local.
+
+## M4 — Tests and CI
+
+- Offline pytest suite with saved HTML fixtures (Amazon product, robot check, Myntra).
+- Playwright E2E: Amazon link, Flipkart link, text search, bad input, backend down,
+  Deals → Stack & Buy.
+- GitHub Actions on a clean clone.

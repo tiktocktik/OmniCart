@@ -50,7 +50,7 @@ class CouponInfo(BaseModel):
     source: str
     discount_text: str
     discount_amount: float
-    success_rate: float
+    success_rate: Optional[float] = None
 
 class PaymentOption(BaseModel):
     title: str
@@ -108,8 +108,10 @@ class ProductResolution(BaseModel):
     smart_stack: Optional[SmartStackCombo] = None
     is_loot_deal: bool = False
     loot_drop_percentage: float = 0.0
-    history_source: str = "ESTIMATED_TRAJECTORY"
+    history_source: str = "UNAVAILABLE"
     history_data_points: int = 0
+    status: str = "ok"  # "ok" | "partial" | "unavailable"
+    status_message: Optional[str] = None
 
 class ResolveRequest(BaseModel):
     query_or_url: str

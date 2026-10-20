@@ -96,14 +96,15 @@ export default function Home() {
   const [isLoadingApi, setIsLoadingApi] = useState<boolean>(false);
   const [liveResolvedProduct, setLiveResolvedProduct] =
     useState<ProductDetail | null>(null);
+  const [apiError, setApiError] = useState<{
+    message: string;
+    storeUrl?: string;
+  } | null>(null);
 
   const [cartOpen, setCartOpen] = useState<boolean>(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [trendingDeals, setTrendingDeals] = useState<any[]>(TRENDING_LOOTS);
-  const [searchHistory, setSearchHistory] = useState<string[]>([
-    "https://www.westside.com/products/nuoflexx-light-taupe-cargo-style-relaxed-fit-mid-rise-track-pants-301086458?Color=Beige&Size=30",
-    "https://www.amazon.in/dp/B0GJV4XW2B",
-  ]);
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
 
   // Fetch live community deals on mount
   useEffect(() => {
@@ -291,6 +292,7 @@ export default function Home() {
   const executeQuery = async (queryText: string) => {
     if (!queryText.trim()) return;
 
+    setApiError(null);
     setIsLoadingApi(true);
     setSelectedPoint(null);
     setSelectedImageIndex(0);
@@ -312,6 +314,18 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
 
+        if (data.status === "unavailable") {
+          setLiveResolvedProduct(null);
+          setActiveProductId(null);
+          setApiError({
+            message:
+              data.status_message ||
+              "We couldn't read this product. Open the store to check the price.",
+            storeUrl: data.canonical_url || undefined,
+          });
+          return;
+        }
+
         const mapped: ProductDetail = {
           id: data.id,
           title: data.title,
@@ -326,8 +340,10 @@ export default function Home() {
           allTimeHigh: data.all_time_high,
           productImages:
             data.gallery_images && data.gallery_images.length > 0
-              ? data.gallery_images
-              : [data.image_url],
+              ? data.gallery_images.filter(Boolean)
+              : data.image_url
+                ? [data.image_url]
+                : [],
           prediction: {
             badge: data.prediction.badge as any,
             detail: data.prediction.detail,
@@ -426,10 +442,24 @@ export default function Home() {
         setSelectedImageIndex(0);
         setLiveResolvedProduct(mapped);
       } else {
-        fallbackLocalSearch(queryText);
+        let detail =
+          "Could not resolve this product. Check the link and try again.";
+        try {
+          const body = await res.json();
+          if (body?.detail) detail = body.detail;
+        } catch {
+          // Keep the generic message.
+        }
+        setLiveResolvedProduct(null);
+        setActiveProductId(null);
+        setApiError({ message: detail });
       }
     } catch {
-      fallbackLocalSearch(queryText);
+      setLiveResolvedProduct(null);
+      setActiveProductId(null);
+      setApiError({
+        message: `Could not reach the OmniCart backend at ${API_BASE}. Start the backend and try again.`,
+      });
     } finally {
       setIsLoadingApi(false);
     }
@@ -477,11 +507,6 @@ export default function Home() {
     ) {
       executeQuery(option.url);
     }
-  };
-
-  const fallbackLocalSearch = (_q: string) => {
-    setActiveProductId(null);
-    setLiveResolvedProduct(null);
   };
 
   const selectProduct = (id: string) => {
@@ -782,12 +807,12 @@ export default function Home() {
             </div>
 
             <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50 mb-3">
-              Real market prices. Verified instant savings.
+              Real prices. Honest answers.
             </h1>
             <p className="text-sm sm:text-base text-neutral-600 dark:text-neutral-400 max-w-xl mx-auto font-normal leading-relaxed">
-              Paste any product link or search directly. OmniCart extracts
-              authentic live prices, tests stackable store coupons, and
-              calculates your best credit card reward rails.
+              Paste a product link or Amazon ASIN. OmniCart shows the live
+              price, verified price history when available, and a clear message
+              when a store can no longer be read.
             </p>
           </motion.div>
         )}
@@ -826,6 +851,33 @@ export default function Home() {
             </button>
           </div>
         </form>
+
+        {apiError && (
+          <div className="max-w-2xl mx-auto mb-3 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-xs sm:text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <div className="flex-1">
+              <p>{apiError.message}</p>
+              {apiError.storeUrl && (
+                <a
+                  href={apiError.storeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 font-medium underline underline-offset-2"
+                >
+                  Open store <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setApiError(null)}
+              className="rounded p-1 hover:bg-red-100 dark:hover:bg-red-900/40"
+              aria-label="Dismiss error"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Recent Search History Chips */}
         {searchHistory.length > 0 && (

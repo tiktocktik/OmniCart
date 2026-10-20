@@ -47,11 +47,11 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
         regular_price = 0.0
         primary_image = None
         gallery_images: List[str] = []
-        rating = 4.3
-        ratings_count = 120
-        seller_name = "Official Flagship Store"
-        category = "Fashion & Apparel"
-        availability = "In Stock"
+        rating = 0.0
+        ratings_count = 0
+        seller_name = None
+        category = ""
+        availability = ""
         extracted_coupons = []
         purchase_options: List[Dict[str, Any]] = []
         specifications: Dict[str, str] = {}
@@ -78,8 +78,10 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                         brand_name = pdp.get("brand", {}).get("name", "THE BEETEL HOUSE")
                         ratings_obj = pdp.get("ratings", {})
                         if ratings_obj:
-                            rating = round(float(ratings_obj.get("averageRating", 4.3)), 1)
-                            ratings_count = int(ratings_obj.get("totalCount", 200))
+                            avg = ratings_obj.get("averageRating")
+                            rating = round(float(avg), 1) if avg is not None else 0.0
+                            total = ratings_obj.get("totalCount")
+                            ratings_count = int(total) if total is not None else 0
 
                         category = pdp.get("analytics", {}).get("articleType") or "Trousers"
 
@@ -301,7 +303,7 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
                         "code": c_code,
                         "discount_amount": disc_val,
                         "discount_text": f"Flat ₹{int(disc_val)} Off (Official Promo)",
-                        "success_rate": 99.0,
+                        "success_rate": None,
                         "source": "Retailer Verified Promo"
                     })
 
@@ -560,15 +562,26 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
             seller_name = f"{brand_name} Official Portal"
             platform_name = brand_name
 
+        if live_price <= 0:
+            return {
+                "status": "unavailable",
+                "status_message": (
+                    "No live price was found on this page. "
+                    "Open the store to check the current price."
+                ),
+                "platform": platform_name,
+            }
+
         return {
             "title": title,
-            "live_price": live_price if live_price > 0 else 0.0,
+            "live_price": live_price,
             "regular_price": regular_price if regular_price >= live_price else live_price,
             "image_url": primary_image or (filtered_gallery[0] if filtered_gallery else ""),
             "gallery_images": filtered_gallery[:5],
             "rating": rating,
             "ratings_count": ratings_count,
-            "seller_name": seller_name,
+            # The store name is not the seller. Do not fabricate a seller identity.
+            "seller_name": None,
             "platform": platform_name,
             "category": category,
             "availability": availability,
@@ -576,78 +589,41 @@ def fetch_live_web_product(url: str, pincode: str = "110001") -> Optional[Dict[s
             "purchase_options": purchase_options,
             "specifications": specifications,
             "highlights": highlights[:6],
-            "delivery_promise": f"Standard Delivery to {pincode} in 2-4 business days" if pincode else "Delivery in 2-4 business days"
+            "delivery_promise": f"Standard Delivery to {pincode} in 2-4 business days" if pincode else "Delivery in 2-4 business days",
+            "status": "ok",
         }
-    except Exception as e:
-        # High-res slug extraction on HTTP 403 / network restriction
+    except Exception:
         parsed = urllib.parse.urlparse(url)
-        path_segments = [p for p in parsed.path.strip("/").split("/") if p and not p.isdigit() and p.lower() not in ["buy", "dp", "p", "product", "item", "pdp", "html", "htm"]]
-        if path_segments:
-            raw_slug = path_segments[-1]
-            slug_cleaned = re.sub(r'[-_+]', ' ', raw_slug)
-            slug_cleaned = re.sub(r'\b(pdp|html|htm|php|buy)\b', '', slug_cleaned, flags=re.I).strip()
-            fallback_title = " ".join(w.capitalize() for w in slug_cleaned.split() if len(w) > 1)
-        else:
-            fallback_title = "Verified Retail Listing"
-
         domain_low = parsed.netloc.replace("www.", "").lower()
         if "croma" in domain_low:
             plat = "Croma"
-            seller = "Croma (Infiniti Retail - Tata)"
         elif "reliancedigital" in domain_low:
             plat = "Reliance Digital"
-            seller = "Reliance Retail Official"
         elif "tatacliq" in domain_low:
             plat = "Tata CliQ"
-            seller = "Tata CliQ Certified Partner"
         elif "meesho" in domain_low:
             plat = "Meesho"
-            seller = "Meesho Verified Direct Supplier"
         elif "uniqlo" in domain_low:
             plat = "Uniqlo"
-            seller = "Uniqlo Flagship Store India"
         elif "pantaloons" in domain_low:
             plat = "Pantaloons"
-            seller = "Pantaloons (Aditya Birla Fashion)"
         elif "snitch" in domain_low:
             plat = "Snitch"
-            seller = "Snitch Official Flagship"
         elif "thesouledstore" in domain_low:
             plat = "The Souled Store"
-            seller = "The Souled Store Official"
         elif "redtape" in domain_low:
             plat = "Red Tape"
-            seller = "Red Tape Official Flagship"
         elif "bata" in domain_low:
             plat = "Bata"
-            seller = "Bata India Official"
         elif "puma" in domain_low:
             plat = "Puma"
-            seller = "Puma Sports India Official"
         elif "nike" in domain_low:
             plat = "Nike"
-            seller = "Nike India Official"
         else:
-            plat = domain_low.split(".")[0].capitalize()
-            seller = f"{plat} Official Flagship"
-
-        img = "https://assets.myntassets.com/h_1440,q_90,w_1080/v1/assets/images/2024/2/15/d4094a1d-2882-411a-8bb7-d8c8942b10a21707997577579-Nuoflexx-Cargo-Pants.jpg" if cat == "Fashion & Apparel" else ("https://m.media-amazon.com/images/I/71TaUujFs6L._SL1254_.jpg")
+            plat = domain_low.split(".")[0].capitalize() if domain_low else "Store"
 
         return {
-            "title": fallback_title,
-            "live_price": 0.0,
-            "regular_price": 0.0,
-            "image_url": img,
-            "gallery_images": [img],
-            "rating": 4.3,
-            "ratings_count": 150,
-            "seller_name": seller,
+            "status": "unavailable",
+            "status_message": f"Could not read this {plat} page. Open the store to check the price.",
             "platform": plat,
-            "category": cat,
-            "availability": "Verify in Store",
-            "coupons": [],
-            "purchase_options": [],
-            "specifications": {"Portal Security": f"{plat} cloud shield active; checkout verification required"},
-            "highlights": [f"Direct from {seller}", "100% Genuine Guarantee", "Store Checkout Verification"],
-            "delivery_promise": f"Direct Delivery to {pincode} available on official store" if pincode else "Official store delivery"
         }
