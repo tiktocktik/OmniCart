@@ -478,19 +478,9 @@ export default function Home() {
     }
   };
 
-  const fallbackLocalSearch = (q: string) => {
-    const lower = q.toLowerCase();
-    if (
-      lower.includes("pigeon") ||
-      lower.includes("air") ||
-      lower.includes("fryer")
-    ) {
-      setActiveProductId("pigeon-air-fryer");
-      setLiveResolvedProduct(null);
-    } else {
-      setActiveProductId("tata-olive-oil");
-      setLiveResolvedProduct(null);
-    }
+  const fallbackLocalSearch = (_q: string) => {
+    setActiveProductId(null);
+    setLiveResolvedProduct(null);
   };
 
   const selectProduct = (id: string) => {
